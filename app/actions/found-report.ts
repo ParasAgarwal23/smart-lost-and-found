@@ -4,6 +4,7 @@ import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { generateEmbedding } from "@/lib/embedding";
 
 export type FoundReportState = {
   error: string | null;
@@ -60,14 +61,22 @@ export async function createFoundReport(
       return { error: "Choose an existing category and location.", success: null };
     }
 
+    let embedding: number[];
+    try {
+      embedding = await generateEmbedding(fields.itemName, fields.description);
+    } catch {
+      return { error: "Unable to prepare your report for matching. Please try again.", success: null };
+    }
+    const embeddingValue = JSON.stringify(embedding);
+
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await query(
           `INSERT INTO public."FOUND_REPORT"
            ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name", "Description", "Date_Found", "Status", "Embedding")
-           VALUES ($1, $2, $3, $4, $5, $6, $7::date, NULL, NULL)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7::date, NULL, $8::public.vector(384))`,
           [randomInt(1, 2147483648), user.User_ID, fields.categoryId,
-            fields.locationId, fields.itemName, fields.description, fields.dateFound],
+            fields.locationId, fields.itemName, fields.description, fields.dateFound, embeddingValue],
         );
         return { error: null, success: "Found report submitted successfully." };
       } catch (error) {
