@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { createFoundReport, type FoundReportState } from "@/app/actions/found-report";
 
@@ -59,6 +60,12 @@ export default function FoundReportForm({ categories, locations }: Props) {
       <button type="submit" disabled={pending || missingOptions} className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60">
         {pending ? "Submitting…" : "Submit found report"}
       </button>
+      {state.success && !state.error && (
+        <nav aria-label="Next steps" className="flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:underline [&_a:hover]:text-teal-800">
+          <Link href="/">Back to Home</Link>
+          <Link href="/search">Search</Link>
+        </nav>
+      )}
     </form>
   );
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getPotentialMatches, getUserLostReports, type PotentialMatch, type UserLostReport } from "@/lib/potential-matches";
@@ -29,6 +30,9 @@ export default async function PotentialMatchesPage({ searchParams }: {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
+      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+        ← Back to Home
+      </Link>
       <h1 className="text-2xl font-bold">Potential Matches</h1>
       <p className="mt-2 text-sm text-slate-600">
         Potential matches based on description similarity. These results do not prove ownership.

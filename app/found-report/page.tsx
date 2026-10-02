@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
@@ -20,6 +21,9 @@ export default async function FoundReportPage() {
 
   return (
     <main className="mx-auto max-w-xl px-6 py-12">
+      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+        ← Back to Home
+      </Link>
       <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-bold">Report a found item</h1>
         <p className="mt-2 text-sm text-slate-600">

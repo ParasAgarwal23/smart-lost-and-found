@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { addClaimEvidence, type EvidenceState } from "@/app/actions/claim-evidence";
 
@@ -34,6 +35,12 @@ export default function EvidenceForm({ claims }: {
       <button type="submit" disabled={pending} className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60">
         {pending ? "Submitting…" : "Add evidence"}
       </button>
+      {state.success && !state.error && (
+        <nav aria-label="Next steps" className="flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:underline [&_a:hover]:text-teal-800">
+          <Link href="/claim">Back to Claims</Link>
+          <a href="#claimId">Add Another Evidence</a>
+        </nav>
+      )}
     </form>
   );
 }

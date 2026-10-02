@@ -1,4 +1,17 @@
 import Link from "next/link";
+import { logout } from "@/app/actions/auth";
+
+const features = [
+  { href: "/lost-report", label: "Report Lost Item" },
+  { href: "/found-report", label: "Report Found Item" },
+  { href: "/search", label: "Search" },
+  { href: "/potential-matches", label: "Potential Matches" },
+  { href: "/claim", label: "Claim a Found Item" },
+  { href: "/claim/evidence", label: "Add Claim Evidence" },
+  { href: "/claim/handover", label: "Confirm Item Received" },
+];
+
+const buttonClass = "block w-full rounded-lg bg-teal-700 px-4 py-3 text-center font-medium text-white hover:bg-teal-800";
 
 export default function Home() {
   return (
@@ -14,12 +27,19 @@ export default function Home() {
           A place to help lost items find their way back to their owners.
         </p>
         <p className="mt-4 text-sm leading-6 text-slate-500">
-          The application is under development. Item reporting and other features
-          will be added in upcoming steps.
+          Report lost and found items, search reports, explore potential matches,
+          submit claims and evidence, and confirm item receipt.
         </p>
-        <Link href="/claim" className="mt-6 inline-block rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800">
-          Claim a found item
-        </Link>
+        <nav aria-label="Application features" className="mt-6 grid gap-3 sm:grid-cols-2">
+          {features.map((feature) => (
+            <Link key={feature.href} href={feature.href} className={buttonClass}>
+              {feature.label}
+            </Link>
+          ))}
+          <form action={logout}>
+            <button type="submit" className={buttonClass}>Logout</button>
+          </form>
+        </nav>
       </div>
     </main>
   );

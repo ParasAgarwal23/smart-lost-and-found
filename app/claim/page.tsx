@@ -37,6 +37,9 @@ export default async function ClaimPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
+      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+        ← Back to Home
+      </Link>
       <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-bold">Claim a found item</h1>
         <p className="mt-2 text-sm text-slate-600">Select a found report to submit a claim. Submitting a claim does not confirm ownership.</p>

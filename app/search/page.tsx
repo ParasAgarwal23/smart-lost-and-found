@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { searchReports } from "@/app/actions/search";
 import { query } from "@/lib/db";
 
@@ -35,6 +36,9 @@ export default async function SearchPage({ searchParams }: {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
+      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+        ← Back to Home
+      </Link>
       <h1 className="text-2xl font-bold">Search Lost &amp; Found</h1>
       <form action="/search" method="get" className="mt-6 grid gap-4 rounded-2xl border border-slate-200 bg-white p-6 sm:grid-cols-2">
         <div className="sm:col-span-2">
