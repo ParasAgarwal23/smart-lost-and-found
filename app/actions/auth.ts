@@ -38,5 +38,5 @@ export async function login(
 
 export async function logout(): Promise<void> {
   await destroySession();
-  redirect("/");
+  redirect("/login");
 }
