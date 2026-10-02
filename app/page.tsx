@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-16">
@@ -15,6 +17,9 @@ export default function Home() {
           The application is under development. Item reporting and other features
           will be added in upcoming steps.
         </p>
+        <Link href="/claim" className="mt-6 inline-block rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800">
+          Claim a found item
+        </Link>
       </div>
     </main>
   );

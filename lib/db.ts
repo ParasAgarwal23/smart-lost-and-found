@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Pool, type QueryResult, type QueryResultRow } from "pg";
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 
 const globalForDb = globalThis as typeof globalThis & {
   postgresPool?: Pool;
@@ -39,4 +39,26 @@ export async function query<Row extends QueryResultRow = QueryResultRow>(
   values: unknown[] = [],
 ): Promise<QueryResult<Row>> {
   return getPool().query<Row>(text, values);
+}
+
+export async function withTransaction<T>(
+  operation: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  let discardClient = false;
+  try {
+    await client.query("BEGIN");
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      discardClient = true;
+    }
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
 }
