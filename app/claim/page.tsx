@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
@@ -39,6 +40,9 @@ export default async function ClaimPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-bold">Claim a found item</h1>
         <p className="mt-2 text-sm text-slate-600">Select a found report to submit a claim. Submitting a claim does not confirm ownership.</p>
+        <Link href="/claim/evidence" className="mt-4 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+          Add evidence to your claims
+        </Link>
         {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : reports.length === 0 ? (
           <p className="mt-6 text-slate-600">There are no found reports available for you to claim.</p>
         ) : (
