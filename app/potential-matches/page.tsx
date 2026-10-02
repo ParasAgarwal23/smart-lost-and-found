@@ -60,7 +60,7 @@ export default async function PotentialMatchesPage({ searchParams }: {
         <p className="mt-6 text-slate-600">Select one of your lost reports to find potential matches.</p>
       ) : (
         <section aria-label="Potential matches" className="mt-8 space-y-4">
-          {matches.length === 0 && <p className="text-slate-600">No candidate matches are available for this lost report.</p>}
+          {matches.length === 0 && <p className="text-slate-600">No potential matches found.</p>}
           {matches.map((match) => (
             <article key={match.Found_ID} className="rounded-xl border border-slate-200 bg-white p-6">
               <h2 className="text-lg font-semibold">{match.Item_Name ?? "Unnamed item"}</h2>
