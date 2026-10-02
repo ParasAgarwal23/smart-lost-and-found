@@ -43,6 +43,9 @@ export default async function ClaimPage() {
         <Link href="/claim/evidence" className="mt-4 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
           Add evidence to your claims
         </Link>
+        <Link href="/claim/handover" className="mt-4 ml-4 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
+          Confirm item received
+        </Link>
         {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : reports.length === 0 ? (
           <p className="mt-6 text-slate-600">There are no found reports available for you to claim.</p>
         ) : (
