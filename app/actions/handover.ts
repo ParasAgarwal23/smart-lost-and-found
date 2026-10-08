@@ -40,21 +40,41 @@ export async function createHandover(
     const { claimId, signature } = parsed.data;
 
     await withTransaction(async (client) => {
-      // Serialize receipt confirmations for this claim and authorize using its owner.
+      // Lock the shared item first, as claim creation does, so competing claims
+      // cannot record separate handovers or race with a new claim submission.
+      const report = await client.query<{ Found_ID: number }>(
+        `SELECT f."Found_ID" FROM public."FOUND_REPORT" AS f
+         JOIN public."CLAIM" AS c ON c."Found_ID" = f."Found_ID"
+         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE OF f`,
+        [claimId, user.User_ID],
+      );
+      if (report.rows.length !== 1) {
+        throw new HandoverError("Claim not found or unavailable to your account.");
+      }
+      const foundId = report.rows[0].Found_ID;
+
+      // Retain the claim lock and recheck ownership/association after waiting.
       const claim = await client.query<{ Claim_ID: number }>(
         `SELECT c."Claim_ID" FROM public."CLAIM" AS c
-         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE`,
-        [claimId, user.User_ID],
+         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 AND c."Found_ID" = $3 FOR UPDATE`,
+        [claimId, user.User_ID, foundId],
       );
       if (claim.rows.length !== 1) {
         throw new HandoverError("Claim not found or unavailable to your account.");
       }
 
-      const existing = await client.query<{ Handover_ID: number }>(
-        `SELECT "Handover_ID" FROM public."HANDOVER" WHERE "Claim_ID" = $1`,
-        [claimId],
+      const existing = await client.query<{ Claim_ID: number }>(
+        `SELECT h."Claim_ID" FROM public."HANDOVER" AS h
+         JOIN public."CLAIM" AS c ON c."Claim_ID" = h."Claim_ID"
+         WHERE c."Found_ID" = $1`,
+        [foundId],
       );
-      if (existing.rows.length > 0) throw new HandoverError(duplicateMessage);
+      if (existing.rows.some((handover) => handover.Claim_ID === claimId)) {
+        throw new HandoverError(duplicateMessage);
+      }
+      if (existing.rows.length > 0) {
+        throw new HandoverError("This item has already been handed over.");
+      }
 
       for (let attempt = 0; attempt < 5; attempt++) {
         // Recover from a random ID collision while retaining the parent claim lock.

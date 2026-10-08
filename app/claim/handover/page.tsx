@@ -20,7 +20,9 @@ export default async function HandoverPage() {
        JOIN public."FOUND_REPORT" f ON f."Found_ID" = c."Found_ID"
        WHERE c."User_ID" = $1
          AND NOT EXISTS (
-           SELECT 1 FROM public."HANDOVER" h WHERE h."Claim_ID" = c."Claim_ID"
+           SELECT 1 FROM public."HANDOVER" h
+           JOIN public."CLAIM" handed_claim ON handed_claim."Claim_ID" = h."Claim_ID"
+           WHERE handed_claim."Found_ID" = c."Found_ID"
          )
        ORDER BY c."Claim_Date" DESC NULLS LAST, c."Claim_ID" DESC`,
       [user.User_ID],
