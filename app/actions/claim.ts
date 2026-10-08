@@ -1,11 +1,12 @@
 "use server";
 
 import { randomInt } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type ClaimState = { error: string | null; success: string | null };
+export type ClaimState = { error: string | null; success: string | null; claimId?: number };
 
 const claimSchema = z.object({
   foundId: z.string().regex(/^-?\d+$/).transform(Number)
@@ -32,7 +33,7 @@ export async function createClaim(
     if (!parsed.success) return { error: "Choose a valid found report.", success: null };
     const { foundId } = parsed.data;
 
-    await withTransaction(async (client) => {
+    const claimId = await withTransaction(async (client) => {
       // Serialize submissions for this report before checking existing claims.
       const report = await client.query<{ User_ID: number }>(
         `SELECT "User_ID" FROM public."FOUND_REPORT" WHERE "Found_ID" = $1 FOR UPDATE`,
@@ -65,13 +66,14 @@ export async function createClaim(
         // Recover from an ID collision without aborting the transaction or losing its lock.
         await client.query("SAVEPOINT claim_insert");
         try {
+          const insertedClaimId = randomInt(1, 2147483648);
           await client.query(
             `INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID", "Claim_Date", "Status")
              VALUES ($1, $2, $3, CURRENT_DATE, NULL)`,
-            [randomInt(1, 2147483648), user.User_ID, foundId],
+            [insertedClaimId, user.User_ID, foundId],
           );
           await client.query("RELEASE SAVEPOINT claim_insert");
-          return;
+          return insertedClaimId;
         } catch (error) {
           if (!isPrimaryKeyCollision(error)) throw error;
           await client.query("ROLLBACK TO SAVEPOINT claim_insert");
@@ -80,7 +82,10 @@ export async function createClaim(
       }
       throw new ClaimError("Unable to submit your claim. Please try again.");
     });
-    return { error: null, success: "Claim submitted successfully." };
+    revalidatePath("/claim");
+    revalidatePath("/claim/evidence");
+    revalidatePath("/claim/handover");
+    return { error: null, success: "Claim submitted successfully.", claimId };
   } catch (error) {
     return {
       error: error instanceof ClaimError ? error.message : "Unable to submit your claim. Please try again.",

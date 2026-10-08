@@ -6,8 +6,9 @@ import { addClaimEvidence, type EvidenceState } from "@/app/actions/claim-eviden
 
 const initialState: EvidenceState = { error: null, success: null };
 
-export default function EvidenceForm({ claims }: {
+export default function EvidenceForm({ claims, initialClaimId }: {
   claims: { Claim_ID: number; Item_Name: string | null }[];
+  initialClaimId?: number;
 }) {
   const [state, action, pending] = useActionState(addClaimEvidence, initialState);
   const fieldClass = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-2 focus:outline-teal-700";
@@ -16,7 +17,7 @@ export default function EvidenceForm({ claims }: {
     <form action={action} className="mt-6 space-y-4">
       <div>
         <label htmlFor="claimId" className="block text-sm font-medium">Your claim</label>
-        <select id="claimId" name="claimId" required defaultValue="" className={fieldClass}>
+        <select key={initialClaimId ?? "generic"} id="claimId" name="claimId" required defaultValue={state.claimId ?? initialClaimId ?? ""} className={fieldClass}>
           <option value="" disabled>Select a claim</option>
           {claims.map((claim) => (
             <option key={claim.Claim_ID} value={claim.Claim_ID}>
@@ -37,7 +38,8 @@ export default function EvidenceForm({ claims }: {
       </button>
       {state.success && !state.error && (
         <nav aria-label="Next steps" className="flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:underline [&_a:hover]:text-teal-800">
-          <Link href="/claim">Back to Claims</Link>
+          <Link href="/claim">Back to My Claims</Link>
+          {state.claimId && <Link href={`/claim/evidence?claimId=${state.claimId}#evidence-${state.claimId}`}>View Evidence</Link>}
           <a href="#claimId">Add Another Evidence</a>
         </nav>
       )}

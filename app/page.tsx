@@ -6,7 +6,7 @@ const features = [
   { href: "/found-report", label: "Report Found Item" },
   { href: "/search", label: "Search" },
   { href: "/potential-matches", label: "Potential Matches" },
-  { href: "/claim", label: "Claim a Found Item" },
+  { href: "/claim", label: "My Claims" },
   { href: "/claim/evidence", label: "Add Claim Evidence" },
   { href: "/claim/handover", label: "Confirm Item Received" },
 ];

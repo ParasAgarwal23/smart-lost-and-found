@@ -1,6 +1,7 @@
 "use server";
 
 import { randomInt } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
@@ -98,6 +99,8 @@ export async function createHandover(
       }
       throw new HandoverError("Unable to record receipt. Please try again.");
     });
+    revalidatePath("/claim");
+    revalidatePath("/claim/handover");
     return { error: null, success: "Item receipt recorded successfully." };
   } catch (error) {
     return {

@@ -1,10 +1,11 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type EvidenceState = { error: string | null; success: string | null };
+export type EvidenceState = { error: string | null; success: string | null; claimId?: number };
 
 const evidenceSchema = z.object({
   claimId: z.string().regex(/^-?\d+$/).transform(Number)
@@ -59,7 +60,9 @@ export async function addClaimEvidence(
         [claimId, evidenceNo, description],
       );
     });
-    return { error: null, success: "Claim evidence added successfully." };
+    revalidatePath("/claim");
+    revalidatePath("/claim/evidence");
+    return { error: null, success: "Claim evidence added successfully.", claimId };
   } catch (error) {
     return {
       error: error instanceof EvidenceError ? error.message : "Unable to add claim evidence. Please try again.",
