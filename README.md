@@ -10,11 +10,12 @@ Home (`/`) and Search (`/search`) are public. Login is available at `/login`; re
 2. **Found Report** (`/found-report`): enter the same information with a date found and generate an embedding.
 3. **Search** (`/search`): search item names/descriptions, filter by category, location, or Lost/Found/Both, and sort by newest or oldest date.
 4. **Potential Matches** (`/potential-matches`): select your own lost report and view up to ten found reports ranked by cosine similarity. Retrieval is read-only and does not create `MATCHES`, claims, or handovers.
-5. **Claim** (`/claim`): claim another user's found report if you have not already claimed it and no claim for that report has an existing handover. The claimant comes from the session, the date is database-generated, and `Status` remains NULL. Another user's claim without a handover does not block yours.
+5. **My Claims** (`/claim`): review your own claims, evidence counts, and receipt state, or submit a claim for another user's eligible found report. Search and Potential Matches can preselect an eligible found report. The claimant comes from the session, the date is database-generated, and `Status` remains NULL. Another user's claim without a handover does not block yours.
 6. **Claim Evidence** (`/claim/evidence`): add a trimmed description of 1–255 characters to your own claim and view existing evidence grouped by claim. `File_Path` is saved as NULL and is not displayed.
-7. **Handover** (`/claim/handover`): confirm receipt for your own claim with a trimmed text acknowledgement of 1–100 characters. The database supplies the date; each claim can have at most one handover. Evidence is not required, and claim status is not an eligibility condition.
+7. **Handover** (`/claim/handover`): confirm receipt for your own eligible claim with a trimmed text acknowledgement of 1–100 characters. The database supplies the date. Each claim can have at most one handover, and the application locks the shared found report so only one of its claims can complete a handover. Evidence is not required, and claim status is not an eligibility condition.
+8. **Campus Summary** (`/admin/campus-summary`): ADMIN-only, read-only totals, category and location report counts, and recent lost/found activity. It does not show private claims or change any report.
 
-The homepage links to every feature and provides logout. Feature pages include Home navigation; forms show success/error feedback, pending states, and next-action links without automatically redirecting after success.
+The homepage shows Sign In to visitors and Sign Out, My Claims, and Campus Summary where appropriate for signed-in users. Feature pages include Home navigation; forms retain input on failure and show success/error feedback, pending states, and next-action links without automatically redirecting after success.
 
 ## Technology stack
 
@@ -73,11 +74,12 @@ app/
   found-report/        # Found report page/form
   search/              # Public search
   potential-matches/   # Owned lost-report similarity results
-  claim/               # Claim page/form, evidence/, handover/
+  claim/               # My Claims and submission, evidence/, handover/
+  admin/campus-summary/# ADMIN-only campus totals and activity
   page.tsx             # Homepage/navigation
 lib/                   # Database, auth, session, password, embedding, matching
 db/                    # Schema, seed, verification, views, functions, triggers, indexes
-docs/                  # College requirements and Draw.io database designs
+docs/                  # College requirements, report, demo checklist, diagrams, screenshots
 .env.example           # Empty environment-variable template
 ```
 
@@ -132,7 +134,33 @@ Do not overwrite an existing configured `.env.local`. Never commit it or prefix 
 
 ### 3. Provision a login account
 
-Seed users have **unusable password-hash placeholders**, not demo login credentials. Before signing in, a local database administrator must provision an existing `USER` with a valid Argon2id hash and a supported `USER` or `ADMIN` role. The password helper is implemented in `lib/password.ts`; no registration page or account-provisioning command is provided. No real login credentials are documented here.
+Seed users have **unusable password-hash placeholders**, not demo login credentials. On a fresh seeded database, provision one USER and one ADMIN account locally before the demo. The password helper is implemented in `lib/password.ts`; there is no registration page. A demo ADMIN account was provisioned in the original development database, but it is not part of the portable seed and its password is not documented here.
+
+For each fresh seed account, generate an Argon2id hash locally with the installed `argon2` package. This PowerShell example prompts without echoing the password and passes it to Node through standard input; it does not write plaintext to a file:
+
+```powershell
+$secure = Read-Host 'Choose a local demo password' -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    $hash = $plain | node -e "const a=require('argon2');let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',async()=>console.log(await a.hash(s.replace(/\r?\n$/,''),{type:a.argon2id})))"
+} finally {
+    Remove-Variable plain,secure -ErrorAction SilentlyContinue
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+}
+$hash  # Copy this generated hash privately into the psql step below.
+```
+
+Open `psql` on the new `smart_lost_found` database, assign the generated hash to a **seed placeholder account only**, and confirm one row was updated. For example, seed `User_ID = 1` is a USER account; seed `User_ID = 6` is an ADMIN account. Repeat with a different password/hash for the second role. In the interactive `psql` session:
+
+```sql
+\set demo_hash '<paste the generated Argon2id hash here>'
+UPDATE public."USER" SET "Password_Hash" = :'demo_hash'
+WHERE "User_ID" = 1 AND "Role" = 'USER'
+  AND "Password_Hash" = 'DEMO_HASH_PLACEHOLDER_NOT_FOR_LOGIN';
+```
+
+Do not run that update against an existing account with a real hash. Clear the temporary `$hash` variable after provisioning (`Remove-Variable hash`) and keep passwords and hashes out of tracked files, slides, screenshots, and logs. Use only the credentials you provisioned locally to sign in.
 
 ### 4. Start the application
 
@@ -151,13 +179,13 @@ npm run build
 npm start
 ```
 
-`npm start` serves the completed production build. These are the repository's available validation scripts; there is no dedicated automated-test npm script.
+`npm start` serves the completed production build. There is no dedicated automated-test npm script. Run `node tests/handover.mjs` for the focused database/action regressions. Add `--browser` to that command for real-browser coverage; this requires a running production server at `http://127.0.0.1:3102` and an isolated Chrome debugging endpoint at `http://127.0.0.1:9224` by default. Both modes use the configured development database and temporary fixtures, so run only against a backed-up local test database without concurrent writes. See the setup comments in `tests/handover.mjs` and `tests/polish-browser.mjs`. These scripts are not required to initialize the database.
 
 ## Current limitations
 
 - Seeded reports have NULL embeddings. New reports generate embeddings, but there is no seed backfill command or automatic regeneration after trigger invalidation.
 - Similarity suggests potential matches only; it never proves ownership, approves claims, or automatically marks an item returned. Claim/report status values remain NULL in new submissions; no status workflow is implemented.
-- Evidence is description-only; file/photo uploads, digital signatures, admin dashboards, and approval workflows are not implemented. Handover records a simple claimant acknowledgement.
+- Evidence is description-only; file/photo uploads, digital signatures, administrative editing, and approval workflows are not implemented. Handover records a simple claimant acknowledgement. The ADMIN page is read-only.
 - Login rate limiting is not implemented. Logout deletes the browser cookie; a previously copied stateless session cookie cannot be revoked before expiry.
 
 ## Project references and team
@@ -165,5 +193,7 @@ npm start
 - [College requirements](docs/DBMS%20Level%203%20Project%20Requirements.pdf)
 - [Approved ER diagram](docs/lost_found_ER_diagram_revised.drawio)
 - [Approved relational schema](docs/lost_found_relational_schema_revised.drawio)
+- [Project report](docs/project_report.md)
+- [Demonstration checklist](docs/demo_checklist.md)
 
 The original Draw.io diagrams are retained for historical reference. **Team details: [Add team member names, student IDs, and guide details here.]** No verified team roster is recorded in the repository.

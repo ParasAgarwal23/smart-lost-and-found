@@ -1,0 +1,121 @@
+# Smart Lost and Found Management System — DBMS Level 3 project report
+
+This report follows Section 14 of the [college brief](DBMS%20Level%203%20Project%20Requirements.pdf). The [approved ER diagram](lost_found_ER_diagram_revised.drawio) and [approved relational schema](lost_found_relational_schema_revised.drawio) are the design artifacts; the older Draw.io files are retained as history. Open the revised files in diagrams.net for the presentation.
+
+**Submission details to complete personally:** the brief calls for a two-member team approved by the instructor. Add the actual student names and IDs, each member's database/application contributions, guide/instructor identification, college/course cover-page details, and submission date. The repository does not establish those facts.
+
+## 1. Problem, objectives, scope, and functional requirements
+
+Campus lost-item information is often fragmented. Someone who finds an item may not know who lost it; someone who loses an item may struggle to locate relevant found reports. This application gives both parties a searchable record and a traceable claim-to-handover path.
+
+The objectives are to record lost and found reports with category and campus location; find reports with text/filters or description-based similarity; let authenticated users claim eligible found items and add evidence; record one completed handover per found item; and give ADMIN a read-only view of aggregate campus activity. Similarity is only a suggestion, never proof of ownership.
+
+In scope: Sign In/Sign Out, public search, authenticated report creation, owned lost-report potential matches, own-claim history/submission, evidence, receipt confirmation, and ADMIN Campus Summary. Out of scope: registration, uploads, notifications, payments, maps, claim approval, and a new report-status lifecycle. Existing nullable status fields are not used to invent workflow values.
+
+| Functional requirement | Implemented route or action |
+| --- | --- |
+| Authenticate and distinguish USER/ADMIN | `/login`, `app/actions/auth.ts`, `lib/auth.ts` |
+| Record lost/found reports | `/lost-report`, `/found-report`, report server actions |
+| Browse and filter reports | `/search`, `app/actions/search.ts` |
+| Suggest similar found items for one's lost report | `/potential-matches`, `public.find_potential_matches` |
+| Submit and review own claims | `/claim`, `app/actions/claim.ts` |
+| Add/view own claim evidence | `/claim/evidence`, `app/actions/claim-evidence.ts` |
+| Confirm an eligible receipt once per found item | `/claim/handover`, `app/actions/handover.ts` |
+| Review campus aggregates without private claim data | `/admin/campus-summary` (ADMIN only) |
+
+## 2. Database selection and design
+
+PostgreSQL 18 provides relational primary/foreign keys, transactions, row locks, SQL views and functions, triggers, and indexes in one database. pgvector 0.8.6 stores and compares the 384-dimensional report embeddings in that same relational design. This satisfies the brief's SQL-plus-vector requirement without a second database. Direct parameterized SQL through `pg` keeps the database operations visible for a DBMS demonstration.
+
+The approved ER and relational diagrams define ten tables. `USER` has the role field; `CATEGORY` and `LOCATION` are lookup tables; the two report tables carry item details and embeddings; `FOUND_PHOTOS` and `MATCHES` are existing design relations; `CLAIM` links a claimant to a found report; `CLAIM_EVIDENCE` is a weak entity numbered within a claim; and `HANDOVER` references a claim. Primary/foreign keys, required report/claim links, and unique `HANDOVER.Claim_ID` appear in [schema.sql](../db/schema.sql). The additional application rule of at most one handover across all claims for a found report is enforced in a transaction by locking that `FOUND_REPORT` row before checking/inserting.
+
+### Data dictionary
+
+`PK` means primary key, `FK` foreign key, `UQ` unique, and `NN` explicitly not null. Primary-key components are inherently not null. Other attributes are nullable unless marked. All identifiers below are the exact quoted PostgreSQL names.
+
+| Relation | Columns: type and key/requirement |
+| --- | --- |
+| `USER` | `User_ID` INT PK; `Name` VARCHAR(100); `Email` VARCHAR(100); `Phone` VARCHAR(15); `Role` VARCHAR(20); `Password_Hash` VARCHAR(255) NN |
+| `CATEGORY` | `Category_ID` INT PK; `Category_Name` VARCHAR(50) |
+| `LOCATION` | `Location_ID` INT PK; `Location_Name` VARCHAR(50); `Building` VARCHAR(50) |
+| `LOST_REPORT` | `Lost_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100); `Description` TEXT; `Date_Lost` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
+| `FOUND_REPORT` | `Found_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100); `Description` TEXT; `Date_Found` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
+| `FOUND_PHOTOS` | `Found_ID` INT FK→`FOUND_REPORT`, PK part; `Photo_URL` VARCHAR(255), PK part |
+| `MATCHES` | `Lost_ID` INT FK→`LOST_REPORT`, PK part; `Found_ID` INT FK→`FOUND_REPORT`, PK part; `Match_Score` DECIMAL(5,2); `Match_Status` VARCHAR(20); `Match_Date` DATE |
+| `CLAIM` | `Claim_ID` INT PK; `User_ID` INT FK→`USER` NN; `Found_ID` INT FK→`FOUND_REPORT` NN; `Claim_Date` DATE; `Status` VARCHAR(20) |
+| `CLAIM_EVIDENCE` | `Claim_ID` INT FK→`CLAIM`, PK part; `Evidence_No` INT PK part; `Evidence_Description` VARCHAR(255); `File_Path` VARCHAR(255) |
+| `HANDOVER` | `Handover_ID` INT PK; `Claim_ID` INT FK→`CLAIM` NN UQ; `Handover_Date` DATE; `Signature` VARCHAR(100) |
+
+The live application saves text-only evidence (`File_Path = NULL`) and a typed handover acknowledgement. Photo paths and `MATCHES` rows in [seed.sql](../db/seed.sql) are illustrative database records, not uploaded files or automatically approved matches.
+
+## 3. Implementation and important database operations
+
+Run the creation scripts in the order in [README setup](../README.md#local-setup). [Database documentation](../db/README.md) explains each SQL artifact. The following operations are useful to show in the viva:
+
+| Concept required by brief | Actual implementation and purpose |
+| --- | --- |
+| DDL, PK/FK/unique constraints | [schema.sql](../db/schema.sql) creates the ten approved relations; [verify.sql](../db/verify.sql) checks table/column/constraint shape without changing data. |
+| Joins, grouping, aggregates | [views.sql](../db/views.sql) joins reports to category/location, with a grouped found-photo count. Campus Summary uses separate `COUNT(*)` queries and `UNION ALL` plus `GROUP BY` for category/location totals. |
+| Views | `v_lost_report_details`, `v_found_report_details` expose report context without password hashes or embedding vectors. |
+| Stored functions and subqueries | [functions.sql](../db/functions.sql) defines `get_claim_summary(claim_id)` with a correlated evidence count; [vector_search.sql](../db/vector_search.sql) defines `find_potential_matches`. |
+| Transactions and row locking | Claim, evidence and handover actions use checked-out PostgreSQL clients and `BEGIN`/`COMMIT`/`ROLLBACK`; they lock the relevant parent row before eligibility checks. [transactions.sql](../db/transactions.sql) demonstrates commit, failed insert, rollback and fixture cleanup on an empty demo database. |
+| Triggers | [triggers.sql](../db/triggers.sql) clears an embedding when its source item name/description changes so stale text and vectors are not paired. |
+| Indexes | [indexes.sql](../db/indexes.sql) adds two B-tree access-path indexes; [vector_search.sql](../db/vector_search.sql) adds cosine HNSW indexes. The exact-ranking function materializes candidates and does not rely on HNSW. |
+| Vector retrieval | The app encodes the trimmed item name and description with `Xenova/all-MiniLM-L6-v2` via Transformers.js, mean pooling and normalization. It stores 384 values in `VECTOR(384)` and ranks using cosine distance `<=>`, presenting `1 - distance` as similarity. No threshold or automatic ownership decision is applied. |
+
+Useful read-only SQL to run on the configured database:
+
+```sql
+SELECT * FROM public.v_found_report_details ORDER BY "Date_Found" DESC NULLS LAST LIMIT 5;
+SELECT "Claim_ID", "Found_ID", "Evidence_Count", "Handover_ID"
+FROM public.get_claim_summary(1); -- replace 1 with an existing Claim_ID
+SELECT "Found_ID", "Item_Name", "Cosine_Similarity"
+FROM public.find_potential_matches(1, 10); -- requires a lost report with an embedding
+SELECT "Category_ID", COUNT(*) AS report_count
+FROM public."FOUND_REPORT" GROUP BY "Category_ID"
+HAVING COUNT(*) > 0 ORDER BY report_count DESC;
+```
+
+The brief also lists `ALTER`, `DROP`, and `UPDATE`. The checked-in setup deliberately does not apply these to the approved schema or expose update/delete workflows. For a safe SQL-language demonstration, use an isolated **temporary copy**, never the permanent tables; this example is illustrative and has not been run as a project test:
+
+```sql
+BEGIN;
+CREATE TEMP TABLE dbms_demo_counts AS
+SELECT "Category_ID", COUNT(*)::int AS report_count
+FROM public."FOUND_REPORT" GROUP BY "Category_ID";
+ALTER TABLE dbms_demo_counts ADD COLUMN note text;
+INSERT INTO dbms_demo_counts ("Category_ID", report_count, note)
+VALUES (-1, 0, 'temporary demo row');
+UPDATE dbms_demo_counts SET note = 'reviewed' WHERE "Category_ID" = -1;
+SELECT "Category_ID", SUM(report_count) AS total
+FROM dbms_demo_counts GROUP BY "Category_ID" HAVING SUM(report_count) >= 0;
+DELETE FROM dbms_demo_counts WHERE "Category_ID" = -1;
+DROP TABLE dbms_demo_counts;
+ROLLBACK;
+```
+
+This temporary-table example does not modify the approved ER model or application data. Run it only in a disposable/local demonstration session if the professor asks to see these SQL verbs executed.
+
+## 4. Application architecture and access control
+
+The browser renders Next.js App Router pages. Server Components query PostgreSQL for page data; Server Actions validate submitted form data and perform writes through `lib/db.ts`. The embedding helper runs model inference on the server before inserting new report vectors. Zod validates untrusted inputs. `iron-session` stores an encrypted HTTP-only cookie containing `User_ID` only; each authenticated request reloads role and user from the database. Argon2id verifies password hashes. SQL parameters bind user input rather than interpolating it.
+
+Public users may open Home and Search. USER accounts may report items, inspect their own lost-report matches, submit eligible claims, add/view evidence on their own claims, and record eligible receipts. ADMIN accounts can additionally open the read-only Campus Summary at `/admin/campus-summary`; `requireRole("ADMIN")` runs before its aggregate queries. ADMIN does not gain access to another user's claims or bypass claim/evidence/handover ownership. Claim-specific URL IDs select among server-authorized records, not grant access.
+
+## 5. Application evidence and testing
+
+The repository includes genuine screenshots captured from the local application:
+
+- [Home](screenshots/home.png): public entry point and Sign In.
+- [Search](screenshots/search.png): public report search, filtering and result presentation.
+- [Campus Summary](screenshots/campus-summary.png): ADMIN-only counts, category/location insights and recent activity.
+
+These images show demonstration data, not an endorsement of report ownership or live production metrics. The approved diagrams should be exported or opened from their revised Draw.io sources during presentation.
+
+The earlier application checkpoint was verified with `npm run typecheck`, `npm run lint`, `npm run build`, `git diff --check`, and `node tests/handover.mjs` (including its optional real-browser mode). The regression suite covers claim/evidence/handover authorization, duplicate and concurrent handover attempts, form feedback, search/matching, role access and page behavior. Its fixture cleanup compares all ten application tables to their pre-test contents. Those tests were run for the application checkpoint; this documentation-only update does **not** rerun them. See [tests/handover.mjs](../tests/handover.mjs) and [tests/polish-browser.mjs](../tests/polish-browser.mjs) for exact assertions. A screenshot confirms rendering, not authorization or concurrent correctness.
+
+## 6. Conclusion and future enhancements
+
+The project connects relational report, claim, evidence and handover records with a semantic candidate search while keeping database operations inspectable. It uses the required advanced DBMS concepts without treating similarity as proof or weakening ownership rules. A realistic next iteration could add an explicitly approved account-provisioning process and a controlled embedding refresh after a report-text update. Uploads, notifications, and new status/approval workflows are outside this submission's approved scope.
+
+The [demonstration checklist](demo_checklist.md) gives a short sequence tied to the college brief. The team must still provide its real member names, IDs, individual contributions and guide/cover-page details before submission.
