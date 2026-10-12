@@ -10,26 +10,36 @@ export default async function LostReportPage() {
   const user = await getAuthenticatedUser();
   if (!user) redirect("/login");
 
-  const [categories, locations] = await Promise.all([
+  let categories: { Category_ID: number; Category_Name: string | null }[] = [];
+  let locations: { Location_ID: number; Location_Name: string | null; Building: string | null }[] = [];
+  let error: string | null = null;
+  try {
+    const [categoryResult, locationResult] = await Promise.all([
     query<{ Category_ID: number; Category_Name: string | null }>(
       'SELECT "Category_ID", "Category_Name" FROM public."CATEGORY" ORDER BY "Category_Name", "Category_ID"',
     ),
     query<{ Location_ID: number; Location_Name: string | null; Building: string | null }>(
       'SELECT "Location_ID", "Location_Name", "Building" FROM public."LOCATION" ORDER BY "Location_Name", "Location_ID"',
     ),
-  ]);
+    ]);
+    categories = categoryResult.rows;
+    locations = locationResult.rows;
+  } catch {
+    error = "Unable to load categories and locations. Please reload this page to try again.";
+  }
 
   return (
-    <main className="mx-auto max-w-xl px-6 py-12">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-xl px-4 py-8 sm:px-6 sm:py-12">
       <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
         ← Back to Home
       </Link>
-      <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold">Report a lost item</h1>
+      <section className="form-panel">
+        <h1 className="page-title">Report a lost item</h1>
         <p className="mt-2 text-sm text-slate-600">
           Describe your item and where and when you lost it.
         </p>
-        <LostReportForm categories={categories.rows} locations={locations.rows} />
+        {error ? <p role="alert" className="mt-6 text-red-700">{error} <a href="/lost-report" className="font-medium underline">Reload page</a></p>
+          : <LostReportForm categories={categories} locations={locations} />}
       </section>
     </main>
   );

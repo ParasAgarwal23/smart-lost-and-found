@@ -5,3 +5,72 @@ body {
   color: #0f172a;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* User-supplied names and descriptions must fit narrow screens. */
+h1, h2, h3, p, dd, a, label { overflow-wrap: anywhere; }
+input, select, textarea { min-width: 0; max-width: 100%; }
+button, a, input, select, textarea { outline-offset: 3px; }
+button:focus-visible, a:focus-visible { outline: 2px solid #0f766e; }
+
+/* Shared campus portal presentation; no client-side styling runtime. */
+@layer base {
+  body { background: #f3f6f6; font-family: Arial, Helvetica, sans-serif; line-height: 1.6; }
+  h1, h2, h3 { line-height: 1.2; letter-spacing: -.025em; }
+  main { min-height: 65vh; }
+  main:focus { outline: none; }
+  input, select, textarea { background: #fff; font-size: 1rem; }
+  input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px #ccfbf1; }
+  [aria-invalid="true"] { border-color: #b91c1c; }
+  summary { min-height: 44px; padding-block: .5rem; }
+  [id] { scroll-margin-top: 1.5rem; }
+}
+.site-header { background: #fff; border-bottom: 1px solid #dce5e4; }
+.site-nav { max-width: 72rem; margin: auto; padding: 1.1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.site-brand { display: flex; align-items: center; gap: .75rem; font-weight: 700; line-height: 1.3; }
+.brand-mark { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; flex-shrink: 0; background: #0f766e; color: white; border-radius: .75rem; font-size: .9rem; }
+.brand-caption { display: block; font-size: .75rem; color: #64748b; font-weight: 400; margin-top: .2rem; }
+.nav-search { color: #0f766e; font-size: .875rem; font-weight: 600; padding: .65rem 0; flex-shrink: 0; }
+.site-footer { border-top: 1px solid #dce5e4; padding: 1.5rem; text-align: center; color: #64748b; font-size: .8rem; }
+.skip-link { position: absolute; left: 1rem; top: -10rem; z-index: 20; background: #fff; padding: .75rem; }
+.skip-link:focus { top: 1rem; }
+.page-title { font-size: clamp(1.75rem, 4vw, 2.4rem); font-weight: 700; }
+.page-description { margin-top: .75rem; color: #475569; max-width: 44rem; }
+.form-panel { background: white; border: 1px solid #dce5e4; border-radius: 1rem; padding: clamp(1rem, 3vw, 2rem); box-shadow: 0 2px 6px #0f172a04; min-width: 0; }
+.home-hero { background: white; border: 1px solid #dce5e4; border-top: 5px solid #0f766e; border-radius: 1.25rem; padding: clamp(1.25rem, 5vw, 3.5rem); }
+.home-hero h1 { max-width: 44rem; font-size: clamp(2.25rem, 5vw, 3.75rem); }
+.home-hero > p { max-width: 40rem; }
+.home-hero nav { max-width: 42rem; }
+.eyebrow { font-size: .75rem; font-weight: 700; letter-spacing: .15em; color: #0f766e; }
+.account-label { margin-top: 1.5rem; font-size: .875rem; }
+.badge { display: inline-flex; align-items: center; border-radius: 999px; padding: .25rem .65rem; background: #e2f3ef; color: #115e59; font-size: .75rem; font-weight: 700; letter-spacing: .02em; }
+.badge-lost { background: #fff3dc; color: #854d0e; }
+.journey-grid { display: grid; gap: 1.75rem; margin-top: 1.5rem; }
+.journey-grid li { border-top: 1px solid #cbd5e1; padding-top: 1rem; }
+.journey-grid h3 { margin: .6rem 0; font-weight: 600; }
+.journey-grid p { font-size: .875rem; color: #475569; }
+.step-number { font-size: .75rem; font-weight: 700; color: #0f766e; }
+.results-grid { display: grid; gap: 1.25rem; align-items: start; }
+.results-heading, .empty-panel { grid-column: 1 / -1; }
+.results-heading { color: #475569; font-weight: 600; }
+.item-card { min-width: 0; background: #fff; border: 1px solid #dce5e4; border-radius: .9rem; padding: 1.25rem; }
+.item-details { display: grid; gap: .5rem 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; font-size: .875rem; color: #475569; }
+.item-card nav { border-top: 1px solid #e2e8f0; padding-top: .5rem; }
+.similarity-note { margin-top: 1rem; background: #f1f5f9; border-radius: .5rem; padding: .75rem; font-size: .8rem; color: #475569; }
+.empty-panel { padding: 2rem; border: 1px dashed #94a3b8; border-radius: 1rem; background: #fff; color: #475569; }
+.claims-layout { display: grid; gap: 1.5rem; align-items: start; }
+.claim-submit { order: -1; }
+p[role="status"]:not(:empty), p[role="alert"]:not(:empty) { padding: .85rem 1rem; border: 1px solid currentColor; border-radius: .65rem; font-size: .875rem; }
+@media (min-width: 640px) {
+  .journey-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .item-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .claims-layout { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+  .claim-submit { order: initial; }
+}
+@media (max-width: 389px) {
+  .site-nav { padding-inline: 1rem; }
+  .brand-caption { display: none; }
+  .site-brand { font-size: .85rem; gap: .5rem; }
+}

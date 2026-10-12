@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type EvidenceState = { error: string | null; success: string | null; claimId?: number };
+export type EvidenceState = { error: string | null; success: string | null; claimId?: number; fieldErrors?: Record<string, string> };
 
 const evidenceSchema = z.object({
   claimId: z.string().regex(/^-?\d+$/).transform(Number)
@@ -28,7 +28,7 @@ export async function addClaimEvidence(
       description: formData.get("description"),
     });
     if (!parsed.success) {
-      return { error: "Choose a valid claim and enter an evidence description of 1 to 255 characters.", success: null };
+      return { error: "Choose a valid claim and enter an evidence description of 1 to 255 characters.", success: null, fieldErrors: Object.fromEntries(parsed.error.issues.map((issue) => [String(issue.path[0]), "Check this field."])) };
     }
     const { claimId, description } = parsed.data;
 

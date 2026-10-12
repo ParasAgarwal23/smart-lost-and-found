@@ -46,7 +46,7 @@ export async function getPotentialMatches(userId: number, lostId: unknown): Prom
       return { matches: [], error: "Lost report not found or unavailable to your account." };
     }
     if (!report.rows[0].Has_Embedding) {
-      return { matches: [], error: "This lost report has no usable embedding. Potential matching is unavailable." };
+      return { matches: [], error: "Similarity matching is not available for this report yet. You can still search found items by name, category, or location." };
     }
 
     const result = await query<PotentialMatch>(

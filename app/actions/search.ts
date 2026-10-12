@@ -26,6 +26,7 @@ export type SearchReport = {
   Description: string | null;
   Category_Name: string | null;
   Location_Name: string | null;
+  Building: string | null;
   Report_Date: string | null;
 };
 
@@ -51,7 +52,7 @@ export async function searchReports(input: unknown): Promise<{
          FROM public."FOUND_REPORT"
        )
        SELECT r."Report_ID", r."Report_Type", r."Item_Name", r."Description",
-              c."Category_Name", l."Location_Name", r.report_date::text AS "Report_Date"
+              c."Category_Name", l."Location_Name", l."Building", r.report_date::text AS "Report_Date"
        FROM reports r
        JOIN public."CATEGORY" c ON c."Category_ID" = r."Category_ID"
        JOIN public."LOCATION" l ON l."Location_ID" = r."Location_ID"

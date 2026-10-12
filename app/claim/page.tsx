@@ -21,9 +21,13 @@ type MyClaim = {
   Item_Handed_Over: boolean;
 };
 
-export default async function ClaimPage() {
+export default async function ClaimPage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await getAuthenticatedUser();
   if (!user) redirect("/login");
+
+  const { foundId } = await searchParams;
 
   let reports: { Found_ID: number; Item_Name: string | null; Description: string | null }[] = [];
   let error: string | null = null;
@@ -74,22 +78,29 @@ export default async function ClaimPage() {
     error = "Unable to load eligible found reports. Please try again later.";
   }
 
+  const requestedId = typeof foundId === "string" && /^-?\d+$/.test(foundId) ? Number(foundId) : NaN;
+  const initialFoundId = Number.isInteger(requestedId) && reports.some((report) => report.Found_ID === requestedId)
+    ? requestedId : undefined;
+  const selectionError = !error && foundId !== undefined && initialFoundId === undefined
+    ? "This found report is unavailable to claim. It may be your own report, already claimed by you, or already handed over." : null;
+
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
         ← Back to Home
       </Link>
-      <section id="my-claims" aria-labelledby="claims-title" className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 id="claims-title" className="text-2xl font-bold">My Claims</h1>
+      <div className="claims-layout">
+      <section id="my-claims" aria-labelledby="claims-title" className="form-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3"><h1 id="claims-title" className="page-title">My Claims</h1><a href="#submit-claim" className="inline-flex min-h-11 items-center font-medium text-teal-700 underline">Submit a Claim</a></div>
         <p className="mt-2 text-sm text-slate-600">View your claims, add supporting evidence, and record receipt after you receive an item. A claim does not confirm ownership.</p>
         {historyError ? <p role="alert" className="mt-6 text-red-700">{historyError}</p> : claims.length === 0 ? (
           <p className="mt-6 text-slate-600">You haven&apos;t submitted any claims yet. <a href="#submit-claim" className="font-medium text-teal-700 underline">Submit a Claim</a></p>
         ) : (
           <div className="mt-6 space-y-4">
             {claims.map((claim) => (
-              <article id={`claim-${claim.Claim_ID}`} key={claim.Claim_ID} className="rounded-xl border border-slate-200 p-4">
+              <article id={`claim-${claim.Claim_ID}`} key={claim.Claim_ID} className="item-card">
                 <h2 className="break-words font-semibold">{claim.Item_Name ?? "Unnamed item"}</h2>
-                <dl className="mt-3 space-y-1 text-sm text-slate-600">
+                <dl className="item-details">
                   <div><dt className="inline font-medium">Claim ID: </dt><dd className="inline">{claim.Claim_ID}</dd></div>
                   <div><dt className="inline font-medium">Found Report ID: </dt><dd className="inline">{claim.Found_ID}</dd></div>
                   <div><dt className="inline font-medium">Category: </dt><dd className="inline">{claim.Category_Name ?? "Unnamed category"}</dd></div>
@@ -102,7 +113,7 @@ export default async function ClaimPage() {
                     ? `Receipt recorded · ${claim.Handover_Date ?? "Date not supplied"}`
                     : claim.Item_Handed_Over ? "This item has already been handed over." : "No receipt recorded."}
                 </p>
-                <nav aria-label={`Actions for claim ${claim.Claim_ID}`} className="mt-3 flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:underline [&_a:hover]:text-teal-800">
+                <nav aria-label={`Actions for claim ${claim.Claim_ID}`} className="mt-3 flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:underline [&_a:hover]:text-teal-800">
                   <Link href={`/claim/evidence?claimId=${claim.Claim_ID}#evidence-${claim.Claim_ID}`}>
                     {claim.Evidence_Count === "0" ? "Add Evidence" : "View / Add Evidence"}
                   </Link>
@@ -115,25 +126,26 @@ export default async function ClaimPage() {
           </div>
         )}
       </section>
-      <section id="submit-claim" aria-labelledby="submit-title" className="mt-8 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+      <section id="submit-claim" aria-labelledby="submit-title" className="form-panel claim-submit">
         <h2 id="submit-title" className="text-xl font-bold">Submit a Claim</h2>
         <p className="mt-2 text-sm text-slate-600">Select a found report to submit a claim.</p>
         {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : reports.length === 0 && (
-          <p className="mt-6 text-slate-600">There are no found reports available for you to claim.</p>
+          <p className="mt-6 text-slate-600">There are no found reports available for you to claim. <Link href="/search?type=Found" className="font-medium text-teal-700 underline">Search found items</Link> or check your existing claims above.</p>
         )}
-        <ClaimForm reports={reports} unavailable={error !== null} />
+        <ClaimForm key={JSON.stringify(foundId) ?? "generic"} reports={reports} initialFoundId={initialFoundId} selectionError={selectionError} unavailable={error !== null} />
         {!error && reports.length > 0 && (
-          <section aria-label="Eligible found reports" className="mt-8 space-y-4">
+          <details className="mt-6 space-y-4"><summary className="cursor-pointer font-medium text-teal-700">Browse eligible report details</summary>
             {reports.map((report) => (
-              <article key={report.Found_ID} className="rounded-xl border border-slate-200 p-4">
+              <article key={report.Found_ID} className="item-card">
                 <h3 className="break-words font-semibold">{report.Item_Name ?? "Unnamed item"}</h3>
                 <p className="mt-1 text-sm text-teal-700">Found Report ID: {report.Found_ID}</p>
                 <p className="mt-2 whitespace-pre-wrap break-words">{report.Description ?? "No description supplied."}</p>
               </article>
             ))}
-          </section>
+          </details>
         )}
       </section>
+      </div>
     </main>
   );
 }

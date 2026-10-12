@@ -1,6 +1,7 @@
 "use server";
 
 import { randomInt } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
@@ -9,6 +10,9 @@ import { generateEmbedding } from "@/lib/embedding";
 export type FoundReportState = {
   error: string | null;
   success: string | null;
+  reportId?: number;
+  itemName?: string;
+  fieldErrors?: Record<string, string>;
 };
 
 const databaseId = z.string().regex(/^-?\d+$/).transform(Number)
@@ -47,7 +51,14 @@ export async function createFoundReport(
       dateFound: formData.get("dateFound"),
     });
     if (!parsed.success) {
-      return { error: "Enter valid values for all five fields.", success: null };
+      const messages: Record<string, string> = {
+        itemName: "Enter an item name of 1 to 100 characters.",
+        description: "Enter a description of the item.",
+        categoryId: "Select a category.", locationId: "Select a location.",
+        dateFound: "Enter a valid date found.",
+      };
+      return { error: "Please correct the highlighted fields.", success: null,
+        fieldErrors: Object.fromEntries(parsed.error.issues.map((issue) => [String(issue.path[0]), messages[String(issue.path[0])]])) };
     }
     const fields = parsed.data;
 
@@ -58,7 +69,7 @@ export async function createFoundReport(
       [fields.categoryId, fields.locationId],
     );
     if (!choices.rows[0]?.category_exists || !choices.rows[0]?.location_exists) {
-      return { error: "Choose an existing category and location.", success: null };
+      return { error: "Choose an existing category and location.", success: null, fieldErrors: { categoryId: "Check the selected category.", locationId: "Check the selected location." } };
     }
 
     let embedding: number[];
@@ -71,14 +82,21 @@ export async function createFoundReport(
 
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
+        const reportId = randomInt(1, 2147483648);
         await query(
           `INSERT INTO public."FOUND_REPORT"
            ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name", "Description", "Date_Found", "Status", "Embedding")
            VALUES ($1, $2, $3, $4, $5, $6, $7::date, NULL, $8::public.vector(384))`,
-          [randomInt(1, 2147483648), user.User_ID, fields.categoryId,
+          [reportId, user.User_ID, fields.categoryId,
             fields.locationId, fields.itemName, fields.description, fields.dateFound, embeddingValue],
         );
-        return { error: null, success: "Found report submitted successfully." };
+        // The insert is committed: a cache refresh failure must not invite a duplicate retry.
+        try {
+          revalidatePath("/search");
+          revalidatePath("/potential-matches");
+          revalidatePath("/claim");
+        } catch { console.error("Report saved, but page revalidation failed."); }
+        return { error: null, success: "Found report submitted successfully.", reportId, itemName: fields.itemName };
       } catch (error) {
         // Retry only the approved randomly generated primary-key collision.
         if (!isPrimaryKeyCollision(error)) throw error;

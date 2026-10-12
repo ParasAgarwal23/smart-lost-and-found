@@ -47,16 +47,16 @@ export default async function ClaimEvidencePage({ searchParams }: {
     ? "Claim not found or unavailable to your account." : null;
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-2xl px-4 py-8 sm:px-6 sm:py-12">
       <Link href="/claim" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
         ← Back to My Claims
       </Link>
-      <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold">Add claim evidence</h1>
+      <section className="form-panel">
+        <h1 className="page-title">Add claim evidence</h1>
         <p className="mt-2 text-sm text-slate-600">Select one of your claims and describe information supporting your ownership of the item.</p>
         {selectionError && <p role="alert" className="mt-4 text-sm text-red-700">{selectionError}</p>}
         {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : claims.length === 0 ? (
-          <p className="mt-6 text-slate-600">You have no claims to add evidence to.</p>
+          <p className="mt-6 text-slate-600">You have no claims to add evidence to. <Link href="/claim#submit-claim" className="font-medium text-teal-700 underline">Submit a Claim</Link> to get started.</p>
         ) : (
           <>
             <EvidenceForm key={JSON.stringify(claimId) ?? "generic"} claims={claims} initialClaimId={initialClaimId} />
@@ -65,7 +65,7 @@ export default async function ClaimEvidencePage({ searchParams }: {
               {claims.map((claim) => {
                 const claimEvidence = evidence.filter((entry) => entry.Claim_ID === claim.Claim_ID);
                 return (
-                  <article id={`evidence-${claim.Claim_ID}`} key={claim.Claim_ID} className="rounded-xl border border-slate-200 p-4">
+                  <article id={`evidence-${claim.Claim_ID}`} key={claim.Claim_ID} className="rounded-xl border border-slate-200 p-3 sm:p-4">
                     <h3 className="font-semibold">{claim.Item_Name ?? "Unnamed item"}</h3>
                     <p className="mt-1 text-sm text-teal-700">Claim ID: {claim.Claim_ID}</p>
                     {claimEvidence.length === 0 ? (

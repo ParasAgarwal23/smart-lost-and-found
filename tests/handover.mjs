@@ -44,7 +44,10 @@ function loadProduction(relative) {
     // Revalidation requires Next's request runtime; record calls in this runner.
     if (name === 'next/cache') return { revalidatePath: (pathname) => invalidatedPaths.push(pathname) };
     if (name === '@/lib/session') return { readSession: async () => sessions.getStore() ?? null };
-    if (name.startsWith('@/')) return loadProduction(`${name.slice(2)}.ts`);
+    if (name.startsWith('@/')) {
+      const target = name.slice(2);
+      return loadProduction(`${target}.${fs.existsSync(path.join(root, `${target}.ts`)) ? 'ts' : 'tsx'}`);
+    }
     if (name.startsWith('.')) return loadProduction(path.join(path.dirname(relative), `${name}.tsx`));
     return requireDependency(name);
   };
@@ -67,6 +70,9 @@ const cleanupClaimIds = new Set(claims);
 let fixturesCreated = false;
 
 async function trackFixtureClaims(client = pool) {
+  // Browser-created found reports belong only to the users inserted by this run.
+  const createdReports = await client.query('SELECT "Found_ID" FROM public."FOUND_REPORT" WHERE "User_ID" = ANY($1::int[])', [users]);
+  for (const report of createdReports.rows) if (!reports.includes(report.Found_ID)) reports.push(report.Found_ID);
   // Discover all claims attached to reports this run inserted successfully,
   // including committed actions whose expected-result assertion fails.
   const result = await client.query('SELECT "Claim_ID" FROM public."CLAIM" WHERE "Found_ID" = ANY($1::int[])', [reports]);
@@ -174,7 +180,145 @@ async function overlapping(reportId, operations) {
   }
 }
 
+async function campusSummaryChecks() {
+  const database = loadProduction('lib/db.ts');
+  const originalQuery = database.query;
+  let aggregateCalls = 0;
+  const insightReads = [];
+  let adminReads = 0;
+  try {
+    database.query = async (sql, values) => {
+      if (sql.startsWith('SELECT COUNT(*)::text AS count')) aggregateCalls++;
+      if (!sql.includes('FROM public."USER"')) adminReads++;
+      const result = await originalQuery(sql, values);
+      if (sql.startsWith('WITH reports AS')) insightReads.push({ sql, values, rows: result.rows });
+      return result;
+    };
+    await assert.rejects(renderPage('app/admin/campus-summary/page.tsx', null), error => error.digest?.includes('/login'));
+    const denied = await renderPage('app/admin/campus-summary/page.tsx', users[0], { Role: 'ADMIN', User_ID: users[2] });
+    assert.ok(denied.includes('Access denied'));
+    assert.ok(!denied.includes('Campus totals'));
+    assert.equal(aggregateCalls, 0, 'Unauthorized requests must not run aggregate queries');
+    assert.equal(adminReads, 0, 'Authorization must precede all campus data reads');
+    const admin = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
+    assert.equal(aggregateCalls, 4);
+    for (const [table, label] of [['LOST_REPORT', 'Total lost reports'], ['FOUND_REPORT', 'Total found reports'], ['CLAIM', 'Total claims'], ['HANDOVER', 'Total handovers']]) {
+      const { rows } = await pool.query(`SELECT COUNT(*)::text AS count FROM public."${table}"`);
+      assert.ok(admin.includes(label));
+      assert.ok(admin.includes(`>${BigInt(rows[0].count).toLocaleString('en-US')}</dd>`));
+    }
+    assert.equal(insightReads.length, 3);
+    for (const [table, key, name] of [['CATEGORY', 'Category_ID', 'Category_Name'], ['LOCATION', 'Location_ID', 'Location_Name']]) {
+      // Independent correlated counts catch lost/found join multiplication.
+      const direct = (await pool.query(`SELECT d."${key}" AS id, d."${name}" AS label,
+        ${table === 'LOCATION' ? 'd."Building"' : 'NULL::text'} AS building,
+        (SELECT COUNT(*) FROM public."LOST_REPORT" r WHERE r."${key}"=d."${key}")::text AS lost,
+        (SELECT COUNT(*) FROM public."FOUND_REPORT" r WHERE r."${key}"=d."${key}")::text AS found
+        FROM public."${table}" d ORDER BY d."${key}"`)).rows;
+      const captured = insightReads.find(read => read.sql.includes(`FROM public."${table}"`)).rows;
+      const expected = direct.map(row => ({ ...row, total: String(BigInt(row.lost) + BigInt(row.found)) }));
+      assert.deepEqual([...captured].sort((a,b) => a.id-b.id), expected);
+      for (let n=1;n<captured.length;n++) assert.ok(BigInt(captured[n-1].total) >= BigInt(captured[n].total));
+    }
+    const activity = insightReads.find(read => read.sql.includes('LIMIT $1'));
+    assert.deepEqual(activity.values, [10]);
+    const expectedRecent = (await pool.query(`SELECT r.id, r.type, r.item, c."Category_Name" AS category,
+      l."Location_Name" AS location, l."Building" AS building, r.date::text AS date
+      FROM (SELECT "Lost_ID" AS id, 'Lost' AS type, "Item_Name" AS item, "Category_ID", "Location_ID", "Date_Lost" AS date FROM public."LOST_REPORT"
+        UNION ALL SELECT "Found_ID", 'Found', "Item_Name", "Category_ID", "Location_ID", "Date_Found" FROM public."FOUND_REPORT") r
+      JOIN public."CATEGORY" c ON c."Category_ID"=r."Category_ID"
+      JOIN public."LOCATION" l ON l."Location_ID"=r."Location_ID"
+      ORDER BY r.date DESC NULLS LAST, r.id DESC, r.type ASC LIMIT $1`, [10])).rows;
+    assert.deepEqual(activity.rows, expectedRecent);
+    assert.ok(admin.includes('Reports by Category') && admin.includes('Reports by Location') && admin.includes('Recent Campus Activity'));
+    // Exercise empty and failed reads without altering genuine database records.
+    database.query = async (sql, values) => sql.startsWith('SELECT COUNT(*)::text AS count') ? { rows: [{ count: '0' }] } : sql.startsWith('WITH reports AS') ? { rows: [] } : originalQuery(sql, values);
+    const empty = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
+    assert.equal((empty.match(/>0<\/dd>/g) ?? []).length, 4);
+    assert.ok(empty.includes('No category records') && empty.includes('No location records') && empty.includes('No lost or found reports'));
+    database.query = async (sql, values) => {
+      if (sql.startsWith('SELECT COUNT(*)::text AS count')) throw Error('Private database diagnostic');
+      return originalQuery(sql, values);
+    };
+    const failed = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
+    assert.ok(failed.includes('Unable to load campus totals.'));
+    assert.ok(failed.includes('Try again'));
+    assert.ok(!failed.includes('Private database diagnostic'));
+    assert.ok(!failed.includes('Campus totals'));
+    database.query = async (sql, values) => {
+      if (sql.startsWith('WITH reports AS')) throw Error('Private insight diagnostic');
+      return originalQuery(sql, values);
+    };
+    const partial = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
+    assert.ok(partial.includes('Campus totals'));
+    assert.ok(partial.includes('Unable to load campus insights and recent activity.'));
+    assert.ok(!partial.includes('Private insight diagnostic'));
+    assert.ok(!partial.includes('aria-label="Recent Campus Activity"'));
+  } finally { database.query = originalQuery; }
+  for (const user of [null, users[0], users[2]]) {
+    const home = await renderPage('app/page.tsx', user);
+    assert.equal(home.includes('href="/admin/campus-summary"'), user === users[2]);
+  }
+  console.log('PASS Campus Summary: ADMIN guard before all seven queries, independent category/location totals, recent records and ordering, live counts, empty/error states, and role-specific navigation');
+}
+
 async function workflowBeforeHandover() {
+  await campusSummaryChecks();
+  const visitorHome = await renderPage('app/page.tsx', null);
+  assert.ok(visitorHome.includes('Sign In'));
+  assert.ok(visitorHome.includes('href="/search"'));
+  assert.ok(!visitorHome.includes('Sign Out'));
+  assert.ok(!visitorHome.includes('href="/claim"'));
+  for (const user of [users[0], users[2]]) {
+    const home = await renderPage('app/page.tsx', user);
+    assert.ok(home.includes('Sign Out'));
+    assert.ok(home.includes('My Claims'));
+  }
+  const selected = await renderPage('app/claim/page.tsx', users[0], { foundId: String(reports[3]) });
+  assert.ok(selected.match(new RegExp(`<option[^>]*value="${reports[3]}"[^>]*selected`)));
+  for (const foundId of ['invalid', '2147483648', [String(reports[3])], String(reports[0])]) {
+    const rejected = await renderPage('app/claim/page.tsx', users[0], { foundId });
+    assert.ok(rejected.includes('This found report is unavailable to claim.'));
+  }
+  assert.ok((await renderPage('app/claim/page.tsx', users[2], { foundId: String(reports[3]) })).includes('This found report is unavailable to claim.'));
+  const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
+  const context = await getFoundReportContext(reports, users[0]);
+  assert.equal(context.find((row) => row.Found_ID === reports[0]).Own_Claim_ID, claims[0]);
+  assert.equal(context.find((row) => row.Found_ID === reports[3]).Own_Claim_ID, null);
+  assert.equal((await getFoundReportContext([reports[3]], users[2]))[0].Is_Own_Report, true);
+  assert.ok((await getFoundReportContext(reports, null)).every((row) => row.Own_Claim_ID === null));
+  const search = await renderPage('app/search/page.tsx', users[0], { category: String(id), type: 'Found' });
+  assert.ok(search.includes(`/claim?foundId=${reports[3]}#submit-claim`));
+  assert.ok(search.includes('You have already claimed this item.'));
+  assert.ok(!search.includes(`#claim-${claims[1]}`));
+  const emptySearch = await renderPage('app/search/page.tsx', null, { text: `absent-regression-${id}` });
+  assert.ok(emptySearch.includes('No reports match your search.'));
+  assert.ok(emptySearch.includes('Clear filters'));
+  const invalidSearch = await renderPage('app/search/page.tsx', null, { type: 'invalid' });
+  assert.ok(invalidSearch.includes('Choose valid search filters.'));
+  assert.ok(!invalidSearch.includes('No reports match your search.'));
+  console.log('PASS polish: session navigation, found-report preselection, eligibility, public privacy, and search states');
+  const database = loadProduction('lib/db.ts');
+  const originalQuery = database.query;
+  try {
+    // Inject read failures only; never interrupt the real PostgreSQL service.
+    database.query = async (sql, values) => {
+      if (sql.includes('FROM public."CATEGORY"') || sql.includes('WITH reports AS')) throw new Error('Simulated private database error');
+      return originalQuery(sql, values);
+    };
+    for (const page of ['app/lost-report/page.tsx', 'app/found-report/page.tsx']) {
+      const failed = await renderPage(page, users[0]);
+      assert.ok(failed.includes('Unable to load categories and locations.'));
+      assert.ok(failed.includes('Reload page'));
+      assert.ok(!failed.includes('Simulated private database error'));
+      assert.ok(!failed.includes('id="itemName"'));
+    }
+    const failedSearch = await renderPage('app/search/page.tsx', null);
+    assert.ok(failedSearch.includes('Unable to load filter options.'));
+    assert.ok(!failedSearch.includes('No reports match your search.'));
+    assert.ok(!failedSearch.includes('Simulated private database error'));
+  } finally { database.query = originalQuery; }
+  console.log('PASS polish: safe report/search query failures and recovery links');
   const history = await renderPage('app/claim/page.tsx', users[0], { User_ID: String(users[1]) });
   assert.ok(history.includes('My Claims'));
   assert.ok(history.includes('Submit a Claim'));
@@ -418,6 +562,12 @@ async function run() {
     assert.equal(constraint.rows[0].definition, 'UNIQUE ("Claim_ID")');
     console.log('PASS: existing HANDOVER Claim_ID UNIQUE constraint preserved');
     await workflowAfterHandover(createdClaimId);
+    const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
+    assert.ok((await getFoundReportContext(reports, users[0])).every((row) => row.Has_Handover));
+    if (process.argv.includes('--browser')) {
+      const { runBrowserChecks } = await import('./polish-browser.mjs');
+      await runBrowserChecks({ users, reports, id, pool });
+    }
   } finally {
     if (fixturesCreated) await transaction(async (client) => {
       // Rediscover in finally as well: an action/assertion may fail before the
@@ -427,6 +577,7 @@ async function run() {
       await client.query('DELETE FROM public."CLAIM_EVIDENCE" WHERE "Claim_ID" = ANY($1::int[])', [claimIds]);
       await client.query('DELETE FROM public."HANDOVER" WHERE "Claim_ID" = ANY($1::int[])', [claimIds]);
       await client.query('DELETE FROM public."CLAIM" WHERE "Claim_ID" = ANY($1::int[])', [claimIds]);
+      await client.query('DELETE FROM public."LOST_REPORT" WHERE "User_ID" = ANY($1::int[])', [users]);
       await client.query('DELETE FROM public."FOUND_REPORT" WHERE "Found_ID" = ANY($1::int[])', [reports]);
       await client.query('DELETE FROM public."LOCATION" WHERE "Location_ID" = $1', [id]);
       await client.query('DELETE FROM public."CATEGORY" WHERE "Category_ID" = $1', [id]);

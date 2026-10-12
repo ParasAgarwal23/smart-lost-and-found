@@ -42,12 +42,12 @@ export default async function HandoverPage({ searchParams }: {
     ? "Claim not found or unavailable to your account." : null;
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-2xl px-4 py-8 sm:px-6 sm:py-12">
       <Link href="/claim" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
         ← Back to My Claims
       </Link>
-      <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold">Confirm item received</h1>
+      <section className="form-panel">
+        <h1 className="page-title">Confirm item received</h1>
         <p className="mt-2 text-sm text-slate-600">Select your claim and enter your acknowledgement to record that you have received the item.</p>
         {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : claims.length === 0 && (
           <div className="mt-6 space-y-2 text-slate-600">
