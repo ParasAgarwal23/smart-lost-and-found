@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { authenticateUser } from "@/lib/auth";
+import { safeNextPath } from "@/lib/next-path";
 import { createSession, destroySession } from "@/lib/session";
 
 export type LoginState = { error: string | null };
@@ -33,7 +34,8 @@ export async function login(
   }
 
   // redirect throws internally; keep it outside the error handler.
-  redirect("/");
+  // Return to the page that required sign-in, but only if it is a known app path.
+  redirect(safeNextPath(formData.get("next")) ?? "/");
 }
 
 export async function logout(): Promise<void> {

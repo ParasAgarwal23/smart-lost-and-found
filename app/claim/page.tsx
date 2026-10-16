@@ -1,11 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { loginPath } from "@/lib/next-path";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import ClaimForm from "./claim-form";
+import { Icon } from "@/components/icons";
+import { DateText, EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
+import ClaimForm, { type ClaimableReport } from "./claim-form";
+import WithdrawClaim from "./withdraw-claim";
+import WithdrawNotice from "./withdraw-notice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "My Claims" };
 
 type MyClaim = {
   Claim_ID: number;
@@ -21,19 +28,21 @@ type MyClaim = {
   Item_Handed_Over: boolean;
 };
 
+type EligibleReport = ClaimableReport & { Description: string | null; Building: string | null };
+
 export default async function ClaimPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect("/login");
-
   const { foundId } = await searchParams;
+  const user = await getAuthenticatedUser();
+  if (!user) redirect(loginPath(typeof foundId === "string" && /^-?\d+$/.test(foundId) ? `/claim?foundId=${foundId}` : "/claim"));
 
-  let reports: { Found_ID: number; Item_Name: string | null; Description: string | null }[] = [];
+  let reports: EligibleReport[] = [];
   let error: string | null = null;
   let claims: MyClaim[] = [];
   let historyError: string | null = null;
   try {
+    // get_claim_summary() (db/functions.sql) supplies the evidence count and handover ID.
     const history = await query<MyClaim>(
       `SELECT c."Claim_ID", c."Found_ID", f."Item_Name", f."Category_Name",
               f."Location_Name", f."Building", c."Claim_Date"::text AS "Claim_Date",
@@ -57,9 +66,10 @@ export default async function ClaimPage({ searchParams }: {
     historyError = "Unable to load your claims. Please try again later.";
   }
   try {
-    const result = await query<(typeof reports)[number]>(
-      `SELECT f."Found_ID", f."Item_Name", f."Description"
-       FROM public."FOUND_REPORT" f
+    const result = await query<EligibleReport>(
+      `SELECT f."Found_ID", f."Item_Name", f."Description", f."Location_Name",
+              f."Building", f."Date_Found"::text AS "Date_Found"
+       FROM public.v_found_report_details f
        WHERE f."User_ID" <> $1
          AND NOT EXISTS (
            SELECT 1 FROM public."CLAIM" c
@@ -83,69 +93,98 @@ export default async function ClaimPage({ searchParams }: {
     ? requestedId : undefined;
   const selectionError = !error && foundId !== undefined && initialFoundId === undefined
     ? "This found report is unavailable to claim. It may be your own report, already claimed by you, or already handed over." : null;
+  const requested = reports.find((report) => report.Found_ID === initialFoundId);
+  const arrivedToClaim = foundId !== undefined;
+
+  // One claim form, shown first when the user arrived via "Claim this item".
+  const claimSection = (
+    <section id="submit-claim" aria-labelledby="submit-title" className="card card-pad">
+      <h2 id="submit-title" className="section-title">{requested ? `Claim “${requested.Item_Name ?? "this item"}”` : "Claim a found item"}</h2>
+      {requested && <p className="mt-1 text-sm text-ink-3">Found {formatDate(requested.Date_Found)} · {placeLabel(requested.Location_Name, requested.Building)}</p>}
+      <p className="mt-2 text-sm text-ink-2">After you claim, add proof that it&apos;s yours, such as a receipt or a detail only the owner would know.</p>
+      {error ? <Notice tone="error" className="mt-4">{error}</Notice> : reports.length === 0 && (
+        <p className="mt-4 text-sm text-ink-2">There are no found items you can claim right now. <Link href="/search?type=Found" className="link">Search found items</Link></p>
+      )}
+      <ClaimForm key={JSON.stringify(foundId) ?? "generic"} reports={reports} initialFoundId={initialFoundId} selectionError={selectionError} unavailable={error !== null} />
+    </section>
+  );
 
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
-        ← Back to Home
-      </Link>
-      <div className="claims-layout">
-      <section id="my-claims" aria-labelledby="claims-title" className="form-panel">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h1 id="claims-title" className="page-title">My Claims</h1><a href="#submit-claim" className="inline-flex min-h-11 items-center font-medium text-teal-700 underline">Submit a Claim</a></div>
-        <p className="mt-2 text-sm text-slate-600">View your claims, add supporting evidence, and record receipt after you receive an item. A claim does not confirm ownership.</p>
-        {historyError ? <p role="alert" className="mt-6 text-red-700">{historyError}</p> : claims.length === 0 ? (
-          <p className="mt-6 text-slate-600">You haven&apos;t submitted any claims yet. <a href="#submit-claim" className="font-medium text-teal-700 underline">Submit a Claim</a></p>
-        ) : (
-          <div className="mt-6 space-y-4">
-            {claims.map((claim) => (
-              <article id={`claim-${claim.Claim_ID}`} key={claim.Claim_ID} className="item-card">
-                <h2 className="break-words font-semibold">{claim.Item_Name ?? "Unnamed item"}</h2>
-                <dl className="item-details">
-                  <div><dt className="inline font-medium">Claim ID: </dt><dd className="inline">{claim.Claim_ID}</dd></div>
-                  <div><dt className="inline font-medium">Found Report ID: </dt><dd className="inline">{claim.Found_ID}</dd></div>
-                  <div><dt className="inline font-medium">Category: </dt><dd className="inline">{claim.Category_Name ?? "Unnamed category"}</dd></div>
-                  <div><dt className="inline font-medium">Location: </dt><dd className="inline">{claim.Location_Name ?? "Unnamed location"}{claim.Building ? ` (${claim.Building})` : ""}</dd></div>
-                  <div><dt className="inline font-medium">Claim date: </dt><dd className="inline">{claim.Claim_Date ?? "Date not supplied"}</dd></div>
-                  <div><dt className="inline font-medium">Evidence count: </dt><dd className="inline">{claim.Evidence_Count}</dd></div>
-                </dl>
-                <p className="mt-3 text-sm text-slate-600">
-                  {claim.Handover_ID !== null
-                    ? `Receipt recorded · ${claim.Handover_Date ?? "Date not supplied"}`
-                    : claim.Item_Handed_Over ? "This item has already been handed over." : "No receipt recorded."}
-                </p>
-                <nav aria-label={`Actions for claim ${claim.Claim_ID}`} className="mt-3 flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:underline [&_a:hover]:text-teal-800">
-                  <Link href={`/claim/evidence?claimId=${claim.Claim_ID}#evidence-${claim.Claim_ID}`}>
-                    {claim.Evidence_Count === "0" ? "Add Evidence" : "View / Add Evidence"}
-                  </Link>
-                  {!claim.Item_Handed_Over && claim.Handover_ID === null && (
-                    <Link href={`/claim/handover?claimId=${claim.Claim_ID}`}>Confirm Item Received</Link>
-                  )}
-                </nav>
-              </article>
-            ))}
+    <main id="main-content" tabIndex={-1} className="container-page max-w-3xl py-8 sm:py-12">
+      <h1 id="claims-title" className="page-title">My Claims</h1>
+      <p className="page-description">Items you&apos;ve asked to collect. Each claim shows its next step.</p>
+
+      {arrivedToClaim && <div className="mt-6">{claimSection}</div>}
+
+      <section id="my-claims" aria-labelledby="claims-list-title" className="mt-8">
+        <h2 id="claims-list-title" className="sr-only">Your claims</h2>
+        <WithdrawNotice />
+        {historyError ? <Notice tone="error" className="mt-4">{historyError}</Notice> : claims.length === 0 ? (
+          <div className="mt-4">
+            <EmptyState icon="clipboard" title="You haven't submitted any claims yet."
+              actions={<Link href="/search?type=Found" className="btn btn-primary btn-sm"><Icon name="search" size={16} />Search found items</Link>}>
+              When you spot your item in search or in your possible matches, choose “Claim this item”.
+            </EmptyState>
           </div>
+        ) : (
+          <ul className="mt-4 grid gap-4">
+            {claims.map((claim) => {
+              const evidenceCount = Number(claim.Evidence_Count);
+              const received = claim.Handover_ID !== null;
+              const closedByOther = !received && claim.Item_Handed_Over;
+              const evidenceHref = `/claim/evidence?claimId=${claim.Claim_ID}#evidence-${claim.Claim_ID}`;
+              const handoverHref = `/claim/handover?claimId=${claim.Claim_ID}`;
+              return (
+                <li key={claim.Claim_ID}>
+                  <article id={`claim-${claim.Claim_ID}`} className={`card report-card ${received ? "rail-done" : closedByOther ? "" : "rail-claim"}`}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                      <h3 className="text-lg font-bold">{claim.Item_Name ?? "Unnamed item"}</h3>
+                      <span className="text-xs text-ink-3">Claim #{claim.Claim_ID}</span>
+                    </div>
+                    <p className="text-sm text-ink-3">
+                      {claim.Category_Name ?? "Unnamed category"} · {placeLabel(claim.Location_Name, claim.Building)} · claimed {formatDate(claim.Claim_Date)}
+                    </p>
+                    <ol className="steps" aria-label="Progress">
+                      <li className="step" data-done="true">Claimed</li>
+                      <li className="step" data-done={evidenceCount > 0}>Proof added <span className="sr-only">({evidenceCount})</span></li>
+                      <li className="step" data-done={received}>Received</li>
+                    </ol>
+                    <div className="rounded-xl bg-sunken/60 p-3 text-sm">
+                      {received ? (
+                        <p className="flex items-center gap-2"><Icon name="checkCircle" size={16} className="text-success" /><span>Receipt recorded · <DateText value={claim.Handover_Date} />. This claim is complete.</span></p>
+                      ) : closedByOther ? (
+                        <p className="flex items-center gap-2"><Icon name="lock" size={16} />This item has already been handed over. You can withdraw this claim.</p>
+                      ) : evidenceCount === 0 ? (
+                        <p><span className="font-semibold">Next step:</span> add proof that this item is yours.</p>
+                      ) : (
+                        <p><span className="font-semibold">Next step:</span> once you have the item back, confirm you received it.</p>
+                      )}
+                    </div>
+                    <div className="card-actions">
+                      {!received && !closedByOther && evidenceCount === 0 && <Link href={evidenceHref} className="btn btn-primary btn-sm"><Icon name="file" size={16} />Add evidence</Link>}
+                      {!received && !closedByOther && evidenceCount > 0 && <Link href={handoverHref} className="btn btn-primary btn-sm"><Icon name="gift" size={16} />Confirm item received</Link>}
+                      {evidenceCount > 0 && (
+                        <Link href={evidenceHref} className="link-quiet">
+                          <Icon name="file" size={15} />{received || closedByOther ? "View evidence" : "View or add evidence"} <span className="text-ink-3" data-evidence-count={evidenceCount}>({evidenceCount})</span>
+                        </Link>
+                      )}
+                      {!received && !closedByOther && evidenceCount === 0 && <Link href={handoverHref} className="link-quiet">Already received it?</Link>}
+                      {!received && <span className="sm:ml-auto"><WithdrawClaim claimId={claim.Claim_ID} evidenceCount={evidenceCount} /></span>}
+                    </div>
+                  </article>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
-      <section id="submit-claim" aria-labelledby="submit-title" className="form-panel claim-submit">
-        <h2 id="submit-title" className="text-xl font-bold">Submit a Claim</h2>
-        <p className="mt-2 text-sm text-slate-600">Select a found report to submit a claim.</p>
-        {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : reports.length === 0 && (
-          <p className="mt-6 text-slate-600">There are no found reports available for you to claim. <Link href="/search?type=Found" className="font-medium text-teal-700 underline">Search found items</Link> or check your existing claims above.</p>
-        )}
-        <ClaimForm key={JSON.stringify(foundId) ?? "generic"} reports={reports} initialFoundId={initialFoundId} selectionError={selectionError} unavailable={error !== null} />
-        {!error && reports.length > 0 && (
-          <details className="mt-6 space-y-4"><summary className="cursor-pointer font-medium text-teal-700">Browse eligible report details</summary>
-            {reports.map((report) => (
-              <article key={report.Found_ID} className="item-card">
-                <h3 className="break-words font-semibold">{report.Item_Name ?? "Unnamed item"}</h3>
-                <p className="mt-1 text-sm text-teal-700">Found Report ID: {report.Found_ID}</p>
-                <p className="mt-2 whitespace-pre-wrap break-words">{report.Description ?? "No description supplied."}</p>
-              </article>
-            ))}
-          </details>
-        )}
-      </section>
-      </div>
+
+      {!arrivedToClaim && (
+        <details className="mt-8 rounded-2xl border border-line bg-surface">
+          <summary className="flex min-h-12 cursor-pointer items-center gap-2 px-5 font-bold text-brand"><Icon name="plus" size={16} />Claim another found item</summary>
+          <div className="border-t border-line">{claimSection}</div>
+        </details>
+      )}
     </main>
   );
 }

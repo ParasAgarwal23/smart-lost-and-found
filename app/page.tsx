@@ -1,42 +1,117 @@
 import Link from "next/link";
-import { logout } from "@/app/actions/auth";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { query } from "@/lib/db";
+import { Icon, type IconName } from "@/components/icons";
+import { formatDate, placeLabel } from "@/components/ui";
+
+export const dynamic = "force-dynamic";
+
+type RecentFound = { Found_ID: number; Item_Name: string | null; Location_Name: string | null; Building: string | null; Date_Found: string | null };
+
+const steps: { icon: IconName; title: string; text: string }[] = [
+  { icon: "file", title: "Report it", text: "Describe what you lost or found." },
+  { icon: "sparkles", title: "Find a match", text: "We suggest found items that sound like yours." },
+  { icon: "gift", title: "Get it back", text: "Claim it, add proof, and confirm when it's returned." },
+];
 
 export default async function Home() {
   const user = await getAuthenticatedUser();
-  const primary = "inline-flex min-h-11 items-center justify-center rounded-lg bg-teal-700 px-4 py-3 text-center font-medium text-white hover:bg-teal-800";
-  const secondary = "inline-flex min-h-11 items-center justify-center rounded-lg border border-teal-700 px-4 py-3 text-center font-medium text-teal-700 hover:bg-teal-50";
+  let recent: RecentFound[] = [];
+  try {
+    // Reads the report-detail view, which joins CATEGORY and LOCATION.
+    const result = await query<RecentFound>(
+      `SELECT "Found_ID", "Item_Name", "Location_Name", "Building", "Date_Found"::text AS "Date_Found"
+       FROM public.v_found_report_details
+       ORDER BY "Date_Found" DESC NULLS LAST, "Found_ID" DESC LIMIT 4`,
+    );
+    recent = result.rows;
+  } catch { /* The homepage still works without the recent list. */ }
 
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-16">
-      <section className="home-hero">
-        <p className="eyebrow">CAMPUS LOST &amp; FOUND</p>
-        <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">A little help finding<br />what matters.</h1>
-        <p className="mt-5 leading-7 text-slate-600">Lost something on campus? Search reported items, describe what is missing, and find your next step.</p>
-        {!user && <p className="mt-3 text-sm text-slate-600">Anyone can search. Sign In to report an item, find potential matches, or submit a claim.</p>}
-        {user && <p className="account-label">Signed in <span className="badge">{user.Role === "ADMIN" ? "ADMIN account" : "USER account"}</span><span className="block mt-2 text-sm text-slate-600">Your claims and evidence are private to your account.</span></p>}
-        <nav aria-label="Main actions" className="mt-7 grid gap-3 sm:grid-cols-2">
-          <Link href="/search" className={primary}>Search Lost &amp; Found</Link>
-          {user ? <Link href="/claim" className={secondary}>My Claims</Link> : <Link href="/login" className={secondary}>Sign In</Link>}
-          {user && <>
-            <Link href="/lost-report" className={secondary}>Report Lost Item</Link>
-            <Link href="/found-report" className={secondary}>Report Found Item</Link>
-          </>}
-        </nav>
-        {user && <nav aria-label="Account and matching" className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
-          <Link href="/potential-matches" className="inline-flex min-h-11 items-center font-medium text-teal-700 underline">Potential Matches</Link>
-          {user.Role === "ADMIN" && <Link href="/admin/campus-summary" className="inline-flex min-h-11 items-center gap-2 font-medium text-teal-700 underline">Campus Summary <span className="badge">ADMIN</span></Link>}
-          <form action={logout}><button type="submit" className="min-h-11 rounded-lg px-4 py-2 font-medium text-slate-600 hover:bg-slate-100">Sign Out</button></form>
-        </nav>}
+    <main id="main-content" tabIndex={-1}>
+      <section className="relative overflow-hidden border-b border-line bg-surface">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 size-[28rem] rounded-full bg-accent-soft/70 blur-3xl" />
+        <div className="container-page relative max-w-3xl py-12 text-center sm:py-20">
+          <h1 className="font-display text-[2.3rem] font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
+            Lost something on campus? <span className="text-brand">Let&apos;s bring it back.</span>
+          </h1>
+          <p className="mx-auto mt-4 max-w-xl text-lg text-ink-2">Search everything that has been reported, or tell us what you lost or found.</p>
+          <form action="/search" method="get" role="search" aria-label="Search reports" className="mx-auto mt-8 flex max-w-xl flex-col gap-2 rounded-2xl border border-field bg-surface p-2 shadow-sm sm:flex-row">
+            <label htmlFor="home-search" className="sr-only">What are you looking for?</label>
+            <div className="relative flex-1">
+              <Icon name="search" size={19} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
+              <input id="home-search" name="text" type="search" placeholder="e.g. water bottle, student ID" className="input border-transparent pl-10 shadow-none focus:border-brand" />
+            </div>
+            <button type="submit" className="btn btn-primary">Search</button>
+          </form>
+          <nav aria-label="Main actions" className="mt-5 flex flex-wrap justify-center gap-3">
+            <Link href="/lost-report" className="btn btn-secondary"><Icon name="question" size={17} className="text-lost" />I lost something</Link>
+            <Link href="/found-report" className="btn btn-secondary"><Icon name="box" size={17} className="text-brand" />I found something</Link>
+          </nav>
+          {!user && (
+            <p className="mt-5 text-sm text-ink-3">
+              Searching is open to everyone. Reporting and claiming need an account — <Link href="/login" className="link">Sign In</Link>.
+            </p>
+          )}
+        </div>
       </section>
-      <section aria-labelledby="how-it-works" className="mt-10">
-        <h2 id="how-it-works" className="text-xl font-semibold">From missing to returned</h2>
-        <ol className="journey-grid">
-          <li><span className="step-number">01</span><h3>Search or report</h3><p>Browse campus reports, or describe an item you lost or found.</p></li>
-          <li><span className="step-number">02</span><h3>Check the details</h3><p>Compare descriptions and potential matches. Similarity is a suggestion, not proof of ownership.</p></li>
-          <li><span className="step-number">03</span><h3>Claim and confirm</h3><p>Submit a claim, add your evidence, and confirm receipt only after the item is returned.</p></li>
-        </ol>
-      </section>
+
+      {user && (
+        <section aria-label="Your account" className="border-b border-line bg-brand-soft/50">
+          <div className="container-page flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+            <p className="account-label text-ink-2">
+              Signed in as <span className="font-semibold text-ink">{user.Name ?? "your account"}</span>{" "}
+              <span className={`badge ${user.Role === "ADMIN" ? "badge-admin" : "badge-neutral"}`}>{user.Role === "ADMIN" ? "ADMIN account" : "USER account"}</span>
+            </p>
+            <nav aria-label="Your shortcuts" className="flex flex-wrap gap-x-5 gap-y-1">
+              <Link href="/my-reports" className="link">My Reports</Link>
+              <Link href="/claim" className="link">My Claims</Link>
+              {user.Role === "ADMIN" && <Link href="/admin/campus-summary" className="link">Campus Summary</Link>}
+            </nav>
+          </div>
+        </section>
+      )}
+
+      <div className="container-page grid gap-10 pt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <section aria-labelledby="how-it-works">
+          <h2 id="how-it-works" className="section-title">How it works</h2>
+          <ol className="mt-4 grid gap-4">
+            {steps.map((step, index) => (
+              <li key={step.title} className="flex gap-4">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand text-white"><Icon name={step.icon} size={18} /></span>
+                <span>
+                  <span className="block font-bold"><span className="sr-only">Step {index + 1}: </span>{step.title}</span>
+                  <span className="block text-sm text-ink-2">{step.text}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-5 text-sm text-ink-3">A suggested match is only a hint. You confirm ownership by adding proof to your claim.</p>
+        </section>
+
+        <section aria-labelledby="recent-heading" className="min-w-0">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="recent-heading" className="section-title">Recently found</h2>
+            <Link href="/search?type=Found" className="link text-sm">See all found items</Link>
+          </div>
+          {recent.length === 0 ? (
+            <p className="mt-4 text-sm text-ink-2">No found items have been reported yet.</p>
+          ) : (
+            <ul className="mt-4 grid grid-cols-1 divide-y divide-line rounded-xl border border-line bg-surface">
+              {recent.map((item) => (
+                <li key={item.Found_ID} className="flex min-w-0 items-center gap-3 p-3">
+                  <Icon name="box" size={18} className="text-brand" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{item.Item_Name ?? "Unnamed item"}</span>
+                    <span className="block truncate text-xs text-ink-3">{placeLabel(item.Location_Name, item.Building)}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-ink-3">{formatDate(item.Date_Found)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </main>
   );
 }

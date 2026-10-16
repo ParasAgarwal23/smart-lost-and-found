@@ -59,7 +59,9 @@ export async function runBrowserChecks({ users, id, pool }) {
       await call('Network.setCookie', { name: 'smart_lost_found_session', value, url: base, httpOnly: true, sameSite: 'Lax' });
     }
   }
+  let lastField = null;
   async function fill(field, value) {
+    lastField = field;
     await evaluate(`(() => {
       const input = document.getElementById(${JSON.stringify(field)});
       const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : input.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -67,9 +69,12 @@ export async function runBrowserChecks({ users, id, pool }) {
       input.dispatchEvent(new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
     })()`);
   }
-  async function submit(feedback) {
-    await evaluate(`document.querySelector('button[type=submit]').click()`);
-    await until(`document.querySelector('[role=status]')?.textContent.includes(${JSON.stringify(feedback)}) && !document.querySelector('button[type=submit]')?.disabled`, `Expected submission feedback: ${feedback}`, 120000);
+  const formOf = (field) => `document.getElementById(${JSON.stringify(field)})?.form`;
+  async function submit(feedback, field = lastField) {
+    await evaluate(`${formOf(field)}.querySelector('button[type=submit]').click()`);
+    // The form may unmount its field after success, so keep a handle to it.
+    await evaluate(`(window.__activeForm = ${formOf(field)}, true)`);
+    await until(`window.__activeForm?.querySelector('[role=status]')?.textContent.includes(${JSON.stringify(feedback)}) && !window.__activeForm?.querySelector('button[type=submit]')?.disabled`, `Expected submission feedback: ${feedback}`, 120000);
   }
   const valueOf = (field) => evaluate(`document.getElementById(${JSON.stringify(field)})?.value`);
   const name = (`P${-id}`).padEnd(100, 'x');
@@ -94,15 +99,19 @@ export async function runBrowserChecks({ users, id, pool }) {
     const password = randomBytes(24).toString('base64url');
     const email = `polish-${-id}@example.invalid`;
     await pool.query('UPDATE public."USER" SET "Email"=$1, "Password_Hash"=$2 WHERE "User_ID"=$3', [email, await hash(password, { type: argon2id }), users[0]]);
-    for (const route of ['/lost-report', '/found-report', '/potential-matches', '/claim', '/claim/evidence', '/claim/handover', '/admin/campus-summary']) {
+    for (const route of ['/lost-report', '/found-report', '/my-reports', '/my-reports/edit?type=lost&id=1', '/potential-matches', '/claim', '/claim/evidence', '/claim/handover', '/admin/campus-summary']) {
       await call('Page.navigate', { url: `${base}${route}` });
       await until(`location.pathname === '/login' && document.readyState === 'complete'`, `Protected route allowed anonymous access: ${route}`);
+      if (!route.includes('?')) assert.equal(await evaluate('location.search'), `?next=${encodeURIComponent(route)}`, `Sign-in must remember ${route}`);
     }
+    await call('Page.navigate', { url: `${base}/lost-report` });
+    await until(`location.pathname === '/login' && document.body.textContent.includes('Sign in to report a lost item.')`, 'Sign-in must explain why it is needed');
     await visit('/login');
     await fill('email', email);
     await fill('password', password);
-    await evaluate(`document.querySelector('button[type=submit]').click()`);
-    await until(`location.pathname === '/' && document.body.textContent.includes('Sign Out')`, 'Valid password login must create a working session');
+    await evaluate(`${formOf('password')}.querySelector('button[type=submit]').click()`);
+    // The header updates before the streamed page body; wait for the signed-in workspace too.
+    await until(`location.pathname === '/' && document.body.textContent.includes('Sign Out') && !!document.querySelector('main .account-label')`, 'Valid password login must create a working session');
     assert.ok(await evaluate(`document.body.textContent.includes('USER account')`));
     assert.ok(await evaluate(`!document.querySelector('a[href="/admin/campus-summary"]')`));
     await visit('/admin/campus-summary');
@@ -112,6 +121,18 @@ export async function runBrowserChecks({ users, id, pool }) {
     await until(`location.pathname === '/login' && document.readyState === 'complete'`, 'Sign Out must return to Sign In');
     const cookies = (await call('Network.getCookies', { urls: [base] })).cookies;
     assert.ok(!cookies.some(cookie => cookie.name === 'smart_lost_found_session' && cookie.value), 'Sign Out must clear the session');
+    await visit('/login?next=%2Fmy-reports');
+    await fill('email', email);
+    await fill('password', password);
+    await evaluate(`${formOf('password')}.querySelector('button[type=submit]').click()`);
+    await until(`location.pathname === '/my-reports' && document.readyState === 'complete'`, 'Login must return to the page that required it');
+    await session(null);
+    await visit('/login?next=https%3A%2F%2Fexample.com');
+    await fill('email', email);
+    await fill('password', password);
+    await evaluate(`${formOf('password')}.querySelector('button[type=submit]').click()`);
+    await until(`location.origin === ${JSON.stringify(base)} && location.pathname === '/'`, 'An external next value must be ignored');
+    console.log('PASS browser: sign-in explains why it is needed, returns to the requested page, and ignores external redirects');
     await session(users[2]);
     await visit('/');
     assert.ok(await evaluate(`document.body.textContent.includes('ADMIN account')`));
@@ -134,7 +155,7 @@ export async function runBrowserChecks({ users, id, pool }) {
       SELECT "Lost_ID" AS id, 'Lost' AS type, "Item_Name" AS item, "Date_Lost" AS date FROM public."LOST_REPORT"
       UNION ALL SELECT "Found_ID", 'Found', "Item_Name", "Date_Found" FROM public."FOUND_REPORT") reports
       ORDER BY date DESC NULLS LAST, id DESC, type ASC LIMIT $1`, [10])).rows;
-    assert.deepEqual(await evaluate(`Array.from(document.querySelector('table[aria-label="Recent Campus Activity"]').tBodies[0].rows).map(row => ({ id: Number(row.dataset.reportId), type: row.dataset.reportType, item: row.cells[0].textContent, date: row.cells[4].textContent === 'Date not supplied' ? null : row.cells[4].textContent }))`), expectedActivity.map(row => ({...row, item: row.item ?? 'Unnamed item'})));
+    assert.deepEqual(await evaluate(`Array.from(document.querySelector('table[aria-label="Recent Campus Activity"]').tBodies[0].rows).map(row => ({ id: Number(row.dataset.reportId), type: row.dataset.reportType, item: row.cells[0].textContent, date: row.cells[4].querySelector('time')?.dateTime ?? null }))`), expectedActivity.map(row => ({...row, item: row.item ?? 'Unnamed item'})));
     console.log('PASS browser: category/location tables and recent activity agree with independent PostgreSQL queries');
     for (const width of [320, 390, 768, 1440]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 600 });
@@ -179,11 +200,11 @@ export async function runBrowserChecks({ users, id, pool }) {
     assert.ok(await evaluate(`!!document.querySelector('a[href="/claim?foundId=${saved.found}#submit-claim"]')`));
     await visit(`/potential-matches?lostId=${saved.lost}`);
     const ranking = (await pool.query('SELECT "Found_ID" FROM public.find_potential_matches($1,10)', [saved.lost])).rows.map((row) => row.Found_ID);
-    const displayed = await evaluate(`[...document.querySelectorAll('article')].map(article => Number(article.textContent.match(/Found Report ID: (-?[0-9]+)/)[1]))`);
+    const displayed = await evaluate(`[...document.querySelectorAll('article[data-found-id]')].map(article => Number(article.dataset.foundId))`);
     assert.deepEqual(displayed, ranking);
     await visit(`/claim?foundId=${saved.found}`);
     assert.equal(await valueOf('foundId'), String(saved.found));
-    await submit('Claim submitted successfully.');
+    await submit('Claim submitted successfully.', 'foundId');
     assert.ok(!(await evaluate(`document.querySelector('[role=alert]')?.textContent`)), 'Successful preselected claim must not show an ineligibility warning');
     const claimId = (await pool.query('SELECT "Claim_ID" FROM public."CLAIM" WHERE "User_ID"=$1 AND "Found_ID"=$2', [users[0], saved.found])).rows[0].Claim_ID;
     assert.ok(await evaluate(`!!document.querySelector('#claim-${claimId}')`));
@@ -215,14 +236,29 @@ export async function runBrowserChecks({ users, id, pool }) {
     assert.ok(await evaluate(`document.querySelector('#claim-${claimId}').textContent.includes('Receipt recorded')`));
     console.log('PASS browser: contextual claims, preserved evidence/handover drafts, successful clearing, live history and receipt refresh, unchanged vector ranking');
 
+    // Withdraw through the UI. The fixture report belongs to this run's user,
+    // so handover.mjs cleanup discovers and removes it and any claim on it.
+    const withdrawFound = id - 6;
+    await pool.query('INSERT INTO public."FOUND_REPORT" ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name") VALUES ($1, $2, $3, $3, $4)', [withdrawFound, users[1], id, 'Browser withdrawal item']);
+    await visit(`/claim?foundId=${withdrawFound}`);
+    await submit('Claim submitted successfully.', 'foundId');
+    const withdrawClaimId = (await pool.query('SELECT "Claim_ID" FROM public."CLAIM" WHERE "Found_ID" = $1', [withdrawFound])).rows[0].Claim_ID;
+    await evaluate(`[...document.querySelectorAll('#claim-${withdrawClaimId} button')].find((button) => button.textContent === 'Withdraw claim').click()`);
+    await until(`!!document.querySelector('#claim-${withdrawClaimId} input[name=claimId]')`, 'Withdraw must ask for confirmation first');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."CLAIM" WHERE "Claim_ID" = $1', [withdrawClaimId])).rows[0].count, 1, 'Opening the confirmation must not delete anything');
+    await evaluate(`document.querySelector('#claim-${withdrawClaimId} button[type=submit]').click()`);
+    await until(`!document.querySelector('#claim-${withdrawClaimId}') && [...document.querySelectorAll('main [role=status]')].some((region) => region.textContent.includes('Claim withdrawn.'))`, 'Withdrawn claim must disappear with a visible confirmation');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."CLAIM" WHERE "Claim_ID" = $1', [withdrawClaimId])).rows[0].count, 0);
+    console.log('PASS browser: withdrawal needs confirmation, deletes the claim, removes its card and announces the result');
+
     for (const width of [320, 390, 768, 1440]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 600 });
-      for (const route of ['/', '/login', '/lost-report', '/found-report', '/search', `/potential-matches?lostId=${saved.lost}`, '/claim', '/claim/evidence', '/claim/handover']) {
+      for (const route of ['/', '/login', '/lost-report', '/found-report', '/search', `/potential-matches?lostId=${saved.lost}`, '/claim', '/claim/evidence', '/claim/handover', '/my-reports', `/my-reports/edit?type=lost&id=${saved.lost}`, '/missing-page']) {
         await visit(route);
         assert.ok(await evaluate(`document.documentElement.scrollWidth <= ${width}`), `Horizontal overflow: ${route} at ${width}px`);
       }
     }
-    console.log('PASS browser: all nine routes at 320/390/768/1440px including real 100-character unbroken item names');
+    console.log('PASS browser: all twelve routes (including My Reports, Edit and 404) at 320/390/768/1440px including real 100-character unbroken item names');
   } finally {
     if (targetId) await call('Target.closeTarget', { targetId }, null);
     ws.close();

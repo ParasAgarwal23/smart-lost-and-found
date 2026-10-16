@@ -1,18 +1,23 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { loginPath } from "@/lib/next-path";
 import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
 import ClaimLink from "@/app/claim/claim-link";
-import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getPotentialMatches, getUserLostReports, type PotentialMatch, type UserLostReport } from "@/lib/potential-matches";
+import { Icon } from "@/components/icons";
+import { BackLink, EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Possible matches" };
 
 export default async function PotentialMatchesPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await getAuthenticatedUser();
-  if (!user) redirect("/login");
+  if (!user) redirect(loginPath("/potential-matches"));
 
   const { lostId } = await searchParams;
   const selected = lostId !== undefined && lostId !== "";
@@ -35,55 +40,86 @@ export default async function PotentialMatchesPage({ searchParams }: {
     contexts = await getFoundReportContext(matches.map((match) => match.Found_ID), user.User_ID);
   } catch { /* Preserve similarity results even when extra context cannot load. */ }
   const selectedReport = typeof lostId === "string" ? reports.find((report) => String(report.Lost_ID) === lostId) : undefined;
+  const pendingEmbedding = selectedReport && !selectedReport.Has_Embedding;
 
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-      <Link href="/" className="mb-6 inline-block text-sm font-medium text-teal-700 underline hover:text-teal-800">
-        ← Back to Home
-      </Link>
-      <h1 className="page-title">Potential Matches</h1>
-      <p className="mt-2 text-sm text-slate-600">
-        Potential matches based on description similarity. These results do not prove ownership.
-      </p>
+    <main id="main-content" tabIndex={-1} className="container-page max-w-3xl py-8 sm:py-12">
+      <BackLink href="/my-reports">Back to My Reports</BackLink>
+      <h1 className="page-title">Possible matches</h1>
+      <p className="page-description">Found items whose descriptions are most similar to your lost item, best match first.</p>
+
       {reports.length > 0 && (
-        <form action="/potential-matches" method="get" className="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-          <label htmlFor="lostId" className="block text-sm font-medium">Your lost report</label>
-          <select id="lostId" name="lostId" required defaultValue={selectedReport?.Lost_ID ?? ""}
-            className="min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-2 focus:outline-teal-700">
-            <option value="">Select a lost report</option>
-            {reports.map((report) => (
-              <option key={report.Lost_ID} value={report.Lost_ID}>
-                {report.Lost_ID} — {report.Item_Name ?? "Unnamed item"}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="min-h-11 rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800">
-            Find potential matches
-          </button>
+        <form action="/potential-matches" method="get" className="card mt-6 flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+          <div className="field flex-1">
+            <label htmlFor="lostId" className="label">Your lost item</label>
+            <select id="lostId" name="lostId" required defaultValue={selectedReport?.Lost_ID ?? ""} className="input">
+              <option value="" disabled>Choose one of your lost reports</option>
+              {reports.map((report) => (
+                <option key={report.Lost_ID} value={report.Lost_ID}>
+                  {report.Item_Name ?? "Unnamed item"} — lost {formatDate(report.Date_Lost)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button type="submit" className="btn btn-primary">Show matches</button>
         </form>
       )}
-      <nav aria-label="Other ways to find your item" className="mt-4 flex flex-wrap gap-4 text-sm font-medium text-teal-700 [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:underline"><Link href="/search?type=Found">Search found items</Link><Link href="/lost-report">Report a lost item</Link></nav>
-      {error ? <p role="alert" className="mt-6 text-red-700">{error}</p> : reports.length === 0 ? (
-        <p className="mt-6 text-slate-600">You have no lost reports. Create a lost report to find potential matches.</p>
-      ) : !selected ? (
-        <p className="mt-6 text-slate-600">Select one of your lost reports to find potential matches.</p>
-      ) : (
-        <section aria-label="Potential matches" className="results-grid mt-8">
-          {selectedReport && <h2 className="results-heading text-lg font-semibold">Suggestions for {selectedReport.Item_Name ?? "your lost item"}</h2>}
-          {matches.length === 0 && <p className="text-slate-600">No potential matches found.</p>}
-          {matches.map((match) => (
-            <article key={match.Found_ID} className="item-card">
-              <span className="badge">Potential match</span>
-              <h2 className="mt-3 text-xl font-semibold">{match.Item_Name ?? "Unnamed item"}</h2>
-              <p className="mt-1 text-sm text-teal-700">Found Report ID: {match.Found_ID}</p>
-              <p className="mt-2 whitespace-pre-wrap break-words">{match.Description ?? "No description supplied."}</p>
-              {contexts.filter((context) => context.Found_ID === match.Found_ID).map((context) => <p key={context.Found_ID} className="mt-3 text-sm text-slate-600">{context.Category_Name ?? "Unnamed category"} / {context.Location_Name ?? "Unnamed location"}{context.Building ? ` (${context.Building})` : ""} / Found {context.Date_Found ?? "date not supplied"}</p>)}
-              <p className="similarity-note">Description similarity (cosine): {match.Cosine_Similarity.toFixed(3)}. Higher values indicate more similar descriptions, not verified ownership.</p>
-              <ClaimLink foundId={match.Found_ID} context={contexts.find((context) => context.Found_ID === match.Found_ID)} signedIn />
-            </article>
-          ))}
-        </section>
-      )}
+
+      <section aria-labelledby="matches-heading" className="mt-8">
+        <h2 id="matches-heading" className="sr-only">{selectedReport ? `Matches for ${selectedReport.Item_Name ?? "your lost item"}` : "Matches"}</h2>
+        {error ? (
+          <Notice tone={pendingEmbedding ? "warning" : "error"}
+            action={<Link href="/search?type=Found" className="btn btn-secondary btn-sm"><Icon name="search" size={16} />Search found items instead</Link>}>
+            {error}
+          </Notice>
+        ) : reports.length === 0 ? (
+          <EmptyState icon="question" title="You have no lost reports yet"
+            actions={<Link href="/lost-report" className="btn btn-primary btn-sm"><Icon name="plus" size={16} />Report a lost item</Link>}>
+            Report what you lost and we&apos;ll suggest found items that look similar.
+          </EmptyState>
+        ) : !selected ? (
+          <EmptyState icon="sparkles" title="Choose a lost item above">
+            Select one of your lost reports to see possible matches.
+          </EmptyState>
+        ) : matches.length === 0 ? (
+          <EmptyState icon="inbox" title="No possible matches yet"
+            actions={<Link href="/search?type=Found" className="btn btn-secondary btn-sm">Search found items</Link>}>
+            Nothing similar has been reported as found so far. Check back later.
+          </EmptyState>
+        ) : (
+          <>
+            <p className="notice notice-info mb-4"><Icon name="info" size={18} className="mt-0.5" />
+              <span>A similar description is a hint, not proof. If one looks like yours, claim it and add details only the owner would know.</span>
+            </p>
+            <ol className="grid gap-3" aria-label="Possible matches, best first">
+              {matches.map((match) => {
+                const context = contexts.find((entry) => entry.Found_ID === match.Found_ID);
+                const percent = Math.round(Math.max(0, Math.min(1, match.Cosine_Similarity)) * 100);
+                return (
+                  <li key={match.Found_ID} className="min-w-0">
+                    <article data-found-id={match.Found_ID} className="card report-card rail-match">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="text-lg font-bold">{match.Item_Name ?? "Unnamed item"}</h3>
+                          {context && <p className="text-sm text-ink-3">Found {formatDate(context.Date_Found)} · {placeLabel(context.Location_Name, context.Building)}</p>}
+                        </div>
+                        <p className="shrink-0 text-right">
+                          <span className="font-display block text-2xl font-semibold leading-none">{percent}%</span>
+                          <span className="text-xs text-ink-3">similar</span>
+                        </p>
+                      </div>
+                      <p className="line-clamp-3 whitespace-pre-wrap text-sm text-ink-2">{match.Description ?? "No description supplied."}</p>
+                      <div className="card-actions">
+                        <ClaimLink foundId={match.Found_ID} context={context} signedIn />
+                      </div>
+                    </article>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        )}
+      </section>
     </main>
   );
 }
