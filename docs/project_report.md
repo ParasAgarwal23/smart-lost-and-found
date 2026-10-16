@@ -34,11 +34,15 @@ The approved ER and relational diagrams define ten tables. `USER` has the role f
 
 ![ER diagram](diagrams/er_diagram.png)
 
+Editable source: [`docs/lost_found_ER_diagram.drawio`](lost_found_ER_diagram.drawio) (open in diagrams.net / draw.io) · Image: [`docs/diagrams/er_diagram.png`](diagrams/er_diagram.png)
+
 Eight entities (seven strong, one weak) and eleven relationships in Chen notation, which map to the ten tables: blue rectangles are entities, green diamonds relationships, yellow ellipses attributes. `CLAIM_EVIDENCE` is a weak entity (double border) identified through `HAS_EVIDENCE` (double diamond, total participation shown by the double line); `Photos` is a multivalued attribute (double ellipse); `MATCHES` is the M:N relationship between lost and found reports and carries its own attributes. Cardinalities appear on each relationship line.
 
 ### Relational schema
 
 ![Relational schema](diagrams/relational_schema.png)
+
+Editable source: [`docs/lost_found_relational_schema.drawio`](lost_found_relational_schema.drawio) (open in diagrams.net / draw.io) · Image: [`docs/diagrams/relational_schema.png`](diagrams/relational_schema.png)
 
 Each box is a table; arrows run from a foreign-key column to the primary key it references, coloured by the table that owns the foreign key. Bold markers show PK, FK, UNIQUE and CHECK; the note lists the six named integrity constraints. The "Step" labels follow the ER-to-relational mapping: strong entities, weak entity, 1:1, 1:N, M:N and the multivalued attribute.
 
