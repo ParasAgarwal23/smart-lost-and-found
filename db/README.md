@@ -86,7 +86,9 @@ psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/tr
 
 `public.invalidate_report_embedding()` is a reusable PL/pgSQL trigger function attached through `trg_lost_report_invalidate_embedding` and `trg_found_report_invalidate_embedding`. Both are row-level BEFORE UPDATE OF Item_Name, Description triggers. If either text value actually changes, the function sets only NEW.Embedding to NULL. IS DISTINCT FROM handles changes to or from NULL correctly. Assigning the same text values preserves the embedding; unrelated-column updates and INSERT operations are unaffected.
 
-A stale vector represents an older item description and can produce misleading similarity results. Clearing it makes the missing embedding explicit. The application generates embeddings for newly submitted reports, but does not automatically regenerate one after an external text update. The trigger does not run the model, generate vectors, create matches, or approve/reject claims. If changed text and an embedding are supplied in the same update, that embedding is cleared too; a recomputed embedding would need a separate update.
+A stale vector represents an older item description and can produce misleading similarity results. Clearing it makes the missing embedding explicit. The trigger does not run the model, generate vectors, create matches, or approve/reject claims. If changed text and an embedding are supplied in the same update, that embedding is cleared too; a recomputed embedding needs a separate update.
+
+The application's **Edit report** workflow (`/my-reports/edit`, `lib/report-writes.ts` `updateReport`) relies on exactly this behaviour. It generates the new vector before opening a transaction, then inside one transaction: locks the owned row with `SELECT … FOR UPDATE`, runs `UPDATE … SET "Item_Name", "Description", …` (the trigger fires and sets `Embedding` to NULL when the text changed), and finally runs a second `UPDATE … SET "Embedding" = $vector`. A failure at any step rolls back both statements, so the report never keeps stale text/vector pairs. An external text update made outside the application (e.g. in psql) still leaves `Embedding` NULL until the report is edited in the app or the backfill script below is run.
 
 This demonstrates the college trigger requirement (section 7) and data consistency/integrity (section 12), while supporting the documented vector design (section 8). The creation script is transactional and repeatable and does not change columns, constraints, views, existing functions, or indexes. Verification uses temporary report rows inside a transaction followed by ROLLBACK.
 
@@ -138,3 +140,32 @@ FROM public.find_potential_matches(1, 10);
 The file's second transaction creates only `idx_lost_report_embedding_hnsw` and `idx_found_report_embedding_hnsw`, using HNSW with vector_cosine_ops. These optional approximate indexes support direct queries ordered by the cosine-distance operator with a LIMIT; they do not accelerate the materialized exact-ranking function. The found index supports lost-to-found retrieval, while the lost index supports the reverse direction in a later query. HNSW trades recall for speed; the exact function remains the baseline for comparisons. Existing relational indexes are preserved. Index creation is one-time and fails if an index name already exists.
 
 Results are potential matches only: similar descriptions cannot prove ownership or approve a claim. The function performs no writes, creates no MATCHES rows, and does not change reports, claim decisions, or handover records. This demonstrates vector similarity search and retrieval documentation under college requirements sections 7 and 8, plus indexing under sections 5 and 7.
+
+## Embedding backfill (data only, no schema change)
+
+`seed.sql` deliberately leaves `Embedding` NULL. To make Potential Matches demonstrable for the seeded reports, run:
+
+```powershell
+npm run db:backfill-embeddings -- --dry-run   # count rows only
+npm run db:backfill-embeddings                # write
+```
+
+`scripts/backfill-embeddings.mjs` checks that it is connected to `smart_lost_found`, selects only rows whose `Embedding IS NULL`, encodes `Item_Name + "\n" + Description` with the same model and options as `lib/embedding.ts` (all-MiniLM-L6-v2, mean pooling, normalized, 384 values), and writes every vector in **one transaction**. Each `UPDATE` repeats `"Embedding" IS NULL` and the original text in its `WHERE` clause, so a row edited meanwhile is skipped rather than given a stale vector. Updating only `Embedding` does not fire the invalidation trigger (it watches `Item_Name`/`Description`). The script is idempotent: a second run finds nothing to do.
+
+It was run on the local development database on 2026-10-16 and stored 16 embeddings (8 lost, 8 found); afterwards every seeded lost report's top `find_potential_matches(…, 1)` result was its intended found counterpart (cosine similarity 0.64–0.85), even where the wording differs (e.g. "Phone in navy cover" → "Black mobile with blue case").
+
+## Proposed constraints (not implemented — require approval)
+
+College requirement §12 asks for input validation at the database level. The approved schema enforces keys, NOT NULL foreign keys and `HANDOVER.Claim_ID UNIQUE`, but intentionally has no CHECK constraints (`verify.sql` asserts exactly 24 PK/FK/UNIQUE constraints). Validation is therefore enforced in the application (Zod schemas in `lib/report-input.ts` and the actions). If the design owners approve a schema revision, these additions would move key rules into PostgreSQL; they would also require updating the ER/relational diagrams and `verify.sql`:
+
+```sql
+-- PROPOSAL ONLY. Not part of the approved schema; do not run without approval.
+ALTER TABLE public."USER" ADD CONSTRAINT user_role_check CHECK ("Role" IN ('USER', 'ADMIN'));
+ALTER TABLE public."USER" ADD CONSTRAINT user_email_key UNIQUE ("Email");
+ALTER TABLE public."LOST_REPORT" ADD CONSTRAINT lost_item_name_check CHECK (btrim("Item_Name") <> '');
+ALTER TABLE public."FOUND_REPORT" ADD CONSTRAINT found_item_name_check CHECK (btrim("Item_Name") <> '');
+ALTER TABLE public."CLAIM_EVIDENCE" ADD CONSTRAINT evidence_no_check CHECK ("Evidence_No" > 0);
+ALTER TABLE public."CLAIM" ADD CONSTRAINT claim_user_found_key UNIQUE ("User_ID", "Found_ID");
+```
+
+The "one handover per found item" rule spans several CLAIM rows, so it cannot be a simple column constraint; it stays enforced by the `FOUND_REPORT` row lock in `app/actions/handover.ts` (a trigger could enforce it in the database, again only with approval). Date checks such as "not in the future" depend on `CURRENT_DATE` and are not suitable as CHECK constraints.

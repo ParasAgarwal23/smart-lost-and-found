@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node tests/handover.mjs",
+    "test:browser": "node tests/handover.mjs --browser",
+    "db:backfill-embeddings": "node scripts/backfill-embeddings.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

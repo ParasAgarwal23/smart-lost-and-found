@@ -1,38 +1,72 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { loginPath } from "@/lib/next-path";
 import { AuthorizationError, requireRole } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { Icon, type IconName } from "@/components/icons";
+import { DateText, EmptyState, Notice, PageHeader, ReportTypeBadge } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Campus Summary" };
 
 type ReportGroup = { id: number; label: string | null; building: string | null; lost: string; found: string; total: string };
 type RecentReport = { id: number; type: string; item: string | null; category: string | null; location: string | null; building: string | null; date: string | null };
 
+const format = (value: string) => BigInt(value).toLocaleString("en-US");
+
 function ReportBreakdown({ title, groups, dimension }: { title: string; groups: ReportGroup[]; dimension: string }) {
+  const max = groups.reduce((largest, group) => Math.max(largest, Number(group.total)), 0);
   return (
-    <section className="form-panel min-w-0">
-      <h3 className="text-xl font-semibold">{title}</h3>
-      <p className="mt-2 text-sm text-slate-600">Highest report counts first. Includes groups with no reports.</p>
-      {groups.length === 0 ? <p className="mt-5 text-slate-600">No {dimension.toLowerCase()} records are available.</p> : (
-        <table aria-label={title} className="mt-5 w-full table-fixed text-sm">
-          <thead><tr className="border-b border-slate-200 text-left text-slate-600">
-            <th scope="col" className="w-[46%] pb-3 pr-2 font-medium">{dimension}</th>
-            <th scope="col" className="pb-3 text-right font-medium">Lost</th>
-            <th scope="col" className="pb-3 text-right font-medium">Found</th>
-            <th scope="col" className="pb-3 text-right font-medium">Total</th>
+    <section className="card card-pad min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="section-title">{title}</h3>
+        <p className="flex gap-3 text-xs font-semibold text-ink-2" aria-hidden="true">
+          <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-lost" />Lost</span>
+          <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-brand" />Found</span>
+        </p>
+      </div>
+      {groups.length === 0 ? <p className="mt-5 text-ink-2">No {dimension.toLowerCase()} records are available.</p> : (
+        <table aria-label={title} className="data-table mt-5 table-fixed">
+          <thead><tr>
+            <th scope="col" className="w-[52%]">{dimension}</th>
+            <th scope="col" className="num">Lost</th>
+            <th scope="col" className="num">Found</th>
+            <th scope="col" className="num">Total</th>
           </tr></thead>
-          <tbody>{groups.map(group => <tr key={group.id} data-group-id={group.id} className="border-b border-slate-100 last:border-0">
-            <th scope="row" className="break-words py-3 pr-2 text-left font-medium [overflow-wrap:anywhere]">{group.label ?? `Unnamed ${dimension.toLowerCase()}`}{group.building && <span className="mt-1 block text-xs font-normal text-slate-500">{group.building}</span>}</th>
-            <td className="py-3 text-right tabular-nums text-amber-800 [overflow-wrap:anywhere]">{BigInt(group.lost).toLocaleString("en-US")}</td>
-            <td className="py-3 text-right tabular-nums text-teal-800 [overflow-wrap:anywhere]">{BigInt(group.found).toLocaleString("en-US")}</td>
-            <td className="py-3 text-right font-bold tabular-nums [overflow-wrap:anywhere]">{BigInt(group.total).toLocaleString("en-US")}</td>
-          </tr>)}</tbody>
+          <tbody>{groups.map(group => {
+            const lostWidth = max ? (Number(group.lost) / max) * 100 : 0;
+            const foundWidth = max ? (Number(group.found) / max) * 100 : 0;
+            return (
+              <tr key={group.id} data-group-id={group.id}>
+                <th scope="row" className="text-left font-semibold">
+                  {group.label ?? `Unnamed ${dimension.toLowerCase()}`}
+                  {group.building && <span className="block text-xs font-normal text-ink-3">{group.building}</span>}
+                  <span aria-hidden="true" className="mt-2 flex h-2 overflow-hidden rounded-full bg-sunken">
+                    <span className="bg-lost" style={{ width: `${lostWidth}%` }} />
+                    <span className="bg-brand" style={{ width: `${foundWidth}%` }} />
+                  </span>
+                </th>
+                <td className="num text-lost-ink">{format(group.lost)}</td>
+                <td className="num text-brand-ink">{format(group.found)}</td>
+                <td className="num font-bold">{format(group.total)}</td>
+              </tr>
+            );
+          })}</tbody>
         </table>
       )}
     </section>
   );
 }
+
+// Icon, colour and source table for each total (the note becomes a tooltip).
+const statMeta: Record<string, { icon: IconName; tone: string; note: string }> = {
+  "Total lost reports": { icon: "question", tone: "bg-lost-soft text-lost", note: "LOST_REPORT rows" },
+  "Total found reports": { icon: "box", tone: "bg-brand-soft text-brand", note: "FOUND_REPORT rows" },
+  "Total claims": { icon: "clipboard", tone: "bg-claim-soft text-claim", note: "CLAIM rows" },
+  "Total handovers": { icon: "gift", tone: "bg-accent-soft text-accent-ink", note: "HANDOVER rows" },
+};
 
 export default async function CampusSummaryPage() {
   // Authorize before any aggregate query; the navigation link is not a guard.
@@ -40,14 +74,14 @@ export default async function CampusSummaryPage() {
     await requireRole("ADMIN");
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;
-    if (error.status === 401) redirect("/login");
+    if (error.status === 401) redirect(loginPath("/admin/campus-summary"));
     return (
-      <main id="main-content" tabIndex={-1} className="mx-auto max-w-xl px-4 py-12 sm:px-6">
-        <section className="form-panel">
-          <h1 className="page-title">Access denied</h1>
-          <p role="alert" className="mt-4 text-slate-600">Campus Summary is available only to ADMIN accounts.</p>
-          <Link href="/" className="mt-4 inline-flex min-h-11 items-center font-medium text-teal-700 underline">Back to Home</Link>
-        </section>
+      <main id="main-content" tabIndex={-1} className="container-page py-12">
+        <div className="mx-auto max-w-xl">
+          <EmptyState icon="lock" title="Access denied" actions={<Link href="/" className="btn btn-secondary btn-sm"><Icon name="home" size={16} />Back to Home</Link>}>
+            <p role="alert">Campus Summary is available only to ADMIN accounts.</p>
+          </EmptyState>
+        </div>
       </main>
     );
   }
@@ -120,58 +154,68 @@ export default async function CampusSummaryPage() {
     insightsError = "Unable to load campus insights and recent activity. Please try again.";
   }
 
+  // Each found report can have at most one handover (enforced by the handover
+  // transaction), so handovers / found reports is the share of items returned.
+  const foundTotal = counts.length ? Number(counts[1].value) : 0;
+  const handoverTotal = counts.length ? Number(counts[3].value) : 0;
+  const returnRate = foundTotal > 0 ? Math.round((handoverTotal / foundTotal) * 100) : null;
+
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-      <Link href="/" className="mb-6 inline-flex min-h-11 items-center text-sm font-medium text-teal-700 underline">Back to Home</Link>
-      <p className="eyebrow">ADMIN · READ ONLY</p>
-      <h1 className="page-title mt-3">Campus Summary</h1>
-      <p className="page-description">Live totals of reports, claims, and recorded handovers across campus. Explore report patterns and recent lost/found activity. Individual claims and evidence remain private.</p>
+    <main id="main-content" tabIndex={-1} className="container-page py-8 sm:py-12">
+      <PageHeader eyebrow="ADMIN · READ ONLY" icon="shield" title="Campus Summary"
+        description="Activity across campus. Totals update each time this page loads; individual claims and evidence stay private." />
       {error ? (
-        <section className="form-panel mt-6">
-          <p role="alert" className="text-red-700">{error}</p>
-          <a href="/admin/campus-summary" className="mt-3 inline-flex min-h-11 items-center font-medium text-teal-700 underline">Try again</a>
-        </section>
+        <Notice tone="error" className="mt-8" action={<a href="/admin/campus-summary" className="btn btn-secondary btn-sm">Try again</a>}>{error}</Notice>
       ) : (
-        <dl aria-label="Campus totals" className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {counts.map(({ label, value }) => (
-            <div key={label} className="form-panel">
-              <dt className="text-sm font-medium text-slate-600">{label}</dt>
-              <dd className="mt-3 break-words text-4xl font-bold tracking-tight text-teal-800">{BigInt(value).toLocaleString("en-US")}</dd>
+        <>
+          <dl aria-label="Campus totals" className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {counts.map(({ label, value }) => (
+              <div key={label} title={statMeta[label].note} className="card relative p-5 pr-20">
+                <dt className="text-sm font-semibold text-ink-2">{label}<span className={`absolute right-5 top-5 grid size-11 place-items-center rounded-xl ${statMeta[label].tone}`}><Icon name={statMeta[label].icon} size={20} /></span></dt>
+                <dd className="font-display mt-2 text-4xl font-semibold tracking-tight tabular-nums">{format(value)}</dd>
+              </div>
+            ))}
+          </dl>
+          {returnRate !== null && (
+            <div className="card mt-4 flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+              <p className="shrink-0 text-sm font-semibold"><span className="font-display mr-2 text-2xl">{returnRate}%</span>of found items handed over</p>
+              <div className="meter flex-1" role="img" aria-label={`${handoverTotal.toLocaleString("en-US")} of ${foundTotal.toLocaleString("en-US")} found reports have a recorded handover`}>
+                <span style={{ width: `${Math.min(returnRate, 100)}%` }} />
+              </div>
             </div>
-          ))}
-        </dl>
+          )}
+        </>
       )}
-      <section aria-labelledby="insights-heading" className="mt-10">
-        <h2 id="insights-heading" className="text-2xl font-semibold">Campus Insights</h2>
-        <p className="mt-2 text-sm text-slate-600">Lost and found reports grouped by their recorded category and campus location.</p>
-        {insightsError ? <div className="form-panel mt-5"><p role="alert" className="text-red-700">{insightsError}</p><a href="/admin/campus-summary" className="mt-3 inline-flex min-h-11 items-center font-medium text-teal-700 underline">Try again</a></div> : (
-          <div className="mt-5 grid items-start gap-5 lg:grid-cols-2">
+      <section aria-labelledby="insights-heading" className="mt-12">
+        <h2 id="insights-heading" className="font-display text-2xl font-semibold">Campus Insights</h2>
+        <p className="mt-1 text-sm text-ink-2">Where things go missing and turn up, busiest first.</p>
+        {insightsError ? <Notice tone="error" className="mt-5" action={<a href="/admin/campus-summary" className="btn btn-secondary btn-sm">Try again</a>}>{insightsError}</Notice> : (
+          <div className="mt-5 grid items-start gap-5 xl:grid-cols-2">
             <ReportBreakdown title="Reports by Category" groups={categories} dimension="Category" />
             <ReportBreakdown title="Reports by Location" groups={locations} dimension="Location" />
           </div>
         )}
       </section>
-      {!insightsError && <section aria-labelledby="activity-heading" className="form-panel mt-8">
-        <h2 id="activity-heading" className="text-2xl font-semibold">Recent Campus Activity</h2>
-        <p className="mt-2 text-sm text-slate-600">Up to 10 reports, newest lost/found date first. These are the dates items were lost or found, not submission timestamps.</p>
-        {recent.length === 0 ? <p className="mt-5 text-slate-600">No lost or found reports have been recorded yet.</p> : (
-          <div role="region" aria-label="Recent report details" tabIndex={0} className="mt-5 overflow-x-auto rounded-lg focus-visible:outline-2 focus-visible:outline-teal-700">
-            <table aria-label="Recent Campus Activity" className="w-full min-w-[36rem] table-fixed text-left text-sm">
-              <thead><tr className="border-b border-slate-200 text-slate-600">
-                <th scope="col" className="w-[26%] px-2 pb-3 font-medium">Item</th><th scope="col" className="w-[14%] px-2 pb-3 font-medium">Type</th><th scope="col" className="w-[18%] px-2 pb-3 font-medium">Category</th><th scope="col" className="w-[24%] px-2 pb-3 font-medium">Location</th><th scope="col" className="w-[18%] px-2 pb-3 font-medium">Lost/found date</th>
+      {!insightsError && <section aria-labelledby="activity-heading" className="card card-pad mt-8">
+        <h2 id="activity-heading" className="section-title">Recent Campus Activity</h2>
+        <p className="mt-1 text-sm text-ink-3">The 10 most recent reports, by the date the item was lost or found.</p>
+        {recent.length === 0 ? <p className="mt-5 text-ink-2">No lost or found reports have been recorded yet.</p> : (
+          <div role="region" aria-label="Recent report details" tabIndex={0} className="mt-5 overflow-x-auto rounded-lg">
+            <table aria-label="Recent Campus Activity" className="data-table min-w-[38rem] table-fixed">
+              <thead><tr>
+                <th scope="col" className="w-[28%]">Item</th><th scope="col" className="w-[13%]">Type</th><th scope="col" className="w-[18%]">Category</th><th scope="col" className="w-[24%]">Location</th><th scope="col" className="w-[17%]">Lost/found date</th>
               </tr></thead>
-              <tbody>{recent.map(report => <tr key={`${report.type}-${report.id}`} data-report-id={report.id} data-report-type={report.type} className="border-b border-slate-100 last:border-0 [&_td]:break-words [&_td]:px-2 [&_td]:py-4 [&_td]:align-top [&_td]:[overflow-wrap:anywhere]">
-                <th scope="row" className="break-words px-2 py-4 align-top font-medium [overflow-wrap:anywhere]">{report.item ?? "Unnamed item"}</th>
-                <td><span className={`badge ${report.type === "Lost" ? "badge-lost" : ""}`}>{report.type}</span></td>
+              <tbody>{recent.map(report => <tr key={`${report.type}-${report.id}`} data-report-id={report.id} data-report-type={report.type}>
+                <th scope="row" className="text-left font-semibold">{report.item ?? "Unnamed item"}</th>
+                <td><ReportTypeBadge type={report.type} /></td>
                 <td>{report.category ?? "Unnamed category"}</td>
-                <td>{report.location ?? "Unnamed location"}{report.building && <span className="mt-1 block text-xs text-slate-500">{report.building}</span>}</td>
-                <td className="tabular-nums">{report.date ?? "Date not supplied"}</td>
+                <td>{report.location ?? "Unnamed location"}{report.building && <span className="block text-xs text-ink-3">{report.building}</span>}</td>
+                <td className="tabular-nums"><DateText value={report.date} /></td>
               </tr>)}</tbody>
             </table>
           </div>
         )}
       </section>}
-      <p className="mt-6 text-sm text-slate-600">Totals are retrieved when this page loads. A zero means no records exist for that category. Claims are requests, not proof of ownership.</p>
     </main>
   );
 }

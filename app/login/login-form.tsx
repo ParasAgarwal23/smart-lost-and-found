@@ -2,57 +2,63 @@
 
 import { useActionState, useState } from "react";
 import { login, type LoginState } from "@/app/actions/auth";
+import { Field, FormFeedback, SubmitButton } from "@/components/form";
+import { Icon } from "@/components/icons";
 
 const initialState: LoginState = { error: null };
 
-export default function LoginForm() {
+export default function LoginForm({ next }: { next: string | null }) {
   const [email, setEmail] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [state, formAction, pending] = useActionState(login, initialState);
 
   return (
-    <form action={formAction} className="mt-6 space-y-4">
-      <div>
-        <label htmlFor="email" className="block text-sm font-medium">
-          Email
-        </label>
+    <form action={formAction} aria-busy={pending} className="mt-7 grid gap-5">
+      {next && <input type="hidden" name="next" value={next} />}
+      <Field id="email" label="Email">
         <input
           id="email"
           name="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           aria-describedby="login-feedback"
+          aria-invalid={!!state.error}
           type="email"
           autoComplete="username"
           required
           maxLength={100}
-          className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-2 focus:outline-teal-700"
+          placeholder="you@example.edu"
+          className="input"
         />
-      </div>
-      <div>
-        <label htmlFor="password" className="block text-sm font-medium">
-          Password
-        </label>
-        <input
-          id="password"
-          name="password"
-          aria-describedby="login-feedback"
-          type="password"
-          autoComplete="current-password"
-          required
-          maxLength={1024}
-          className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-2 focus:outline-teal-700"
-        />
-      </div>
-      <p id="login-feedback" role="status" aria-live="polite" className="text-sm text-red-700">
-        {state.error}
-      </p>
-      <button
-        type="submit"
-        disabled={pending}
-        className="min-h-11 w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:cursor-wait disabled:opacity-60"
-      >
-        {pending ? "Signing in…" : "Sign In"}
-      </button>
+      </Field>
+      <Field id="password" label="Password">
+        <div className="relative">
+          <input
+            id="password"
+            name="password"
+            aria-describedby="login-feedback"
+            aria-invalid={!!state.error}
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            required
+            maxLength={1024}
+            className="input pr-12"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((value) => !value)}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            aria-pressed={showPassword}
+            className="absolute right-1 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-lg text-ink-3 hover:bg-sunken hover:text-ink"
+          >
+            <Icon name={showPassword ? "eyeOff" : "eye"} size={18} />
+          </button>
+        </div>
+      </Field>
+      <FormFeedback id="login-feedback" error={state.error} success={null} />
+      <SubmitButton pending={pending} pendingLabel="Signing in…" className="btn btn-primary btn-lg w-full">
+        <Icon name="logIn" size={18} />Sign In
+      </SubmitButton>
     </form>
   );
 }

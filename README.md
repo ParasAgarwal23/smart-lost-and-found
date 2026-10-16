@@ -4,18 +4,40 @@ A college DBMS Level 3 project that brings lost-item reports, found-item reports
 
 ## Features and workflow
 
-Home (`/`) and Search (`/search`) are public. Login is available at `/login`; reporting, potential matches, claims, evidence, and handover require authentication.
+Home (`/`) and Search (`/search`) are public. Login is available at `/login`; reporting, My Reports, potential matches, claims, evidence, and handover require authentication.
 
-1. **Lost Report** (`/lost-report`): enter an item name, description, category, location, and date lost. An embedding is generated before saving.
+1. **Lost Report** (`/lost-report`): enter an item name, description (up to 2,000 characters), category, location, and date lost (not in the future). An embedding is generated before saving.
 2. **Found Report** (`/found-report`): enter the same information with a date found and generate an embedding.
-3. **Search** (`/search`): search item names/descriptions, filter by category, location, or Lost/Found/Both, and sort by newest or oldest date.
-4. **Potential Matches** (`/potential-matches`): select your own lost report and view up to ten found reports ranked by cosine similarity. Retrieval is read-only and does not create `MATCHES`, claims, or handovers.
-5. **My Claims** (`/claim`): review your own claims, evidence counts, and receipt state, or submit a claim for another user's eligible found report. Search and Potential Matches can preselect an eligible found report. The claimant comes from the session, the date is database-generated, and `Status` remains NULL. Another user's claim without a handover does not block yours.
-6. **Claim Evidence** (`/claim/evidence`): add a trimmed description of 1–255 characters to your own claim and view existing evidence grouped by claim. `File_Path` is saved as NULL and is not displayed.
-7. **Handover** (`/claim/handover`): confirm receipt for your own eligible claim with a trimmed text acknowledgement of 1–100 characters. The database supplies the date. Each claim can have at most one handover, and the application locks the shared found report so only one of its claims can complete a handover. Evidence is not required, and claim status is not an eligibility condition.
-8. **Campus Summary** (`/admin/campus-summary`): ADMIN-only, read-only totals, category and location report counts, and recent lost/found activity. It does not show private claims or change any report.
+3. **My Reports** (`/my-reports`, `/my-reports/edit`): list your own lost and found reports with their embedding state, claim count and handover state, and **edit** them (SQL `UPDATE`). Changing the name or description fires the embedding-invalidation trigger and the same transaction stores a fresh vector. Found reports with a recorded handover are closed for edits.
+4. **Search** (`/search`): search item names/descriptions, filter by category, location, or Lost/Found/All, and sort by newest or oldest date. Category, location and sort order sit under **More filters** (opened automatically when one is in use); active filters appear as removable chips.
+5. **Possible matches** (`/potential-matches`, reached from **See matches** in My Reports or after reporting a lost item): pick one of your lost reports and view up to ten found reports ranked by cosine similarity, shown in plain language as a percentage with where/when it was found and its claim action. A short note explains that similarity is a hint, not proof. Retrieval is read-only and does not create `MATCHES`, claims, or handovers.
+6. **My Claims** (`/claim`): each of your claims shows a progress line derived from evidence and handover rows (no status value is stored) and one **next step** with a single primary button (add evidence → confirm received). Arriving from **Claim this item** opens a focused claim form at the top; otherwise the form sits in a collapsed “Claim another found item” section. A claim without a handover can be **withdrawn** (SQL `DELETE` of its evidence and the claim in one transaction). Search and Potential Matches can preselect an eligible found report. The claimant comes from the session, the date is database-generated, and `Status` remains NULL. Another user's claim without a handover does not block yours.
+7. **Claim Evidence** (`/claim/evidence`): add a trimmed description of 1–255 characters to your own claim and view existing evidence grouped by claim. `File_Path` is saved as NULL and is not displayed.
+8. **Handover** (`/claim/handover`): confirm receipt for your own eligible claim with a trimmed text acknowledgement of 1–100 characters. The database supplies the date. Each claim can have at most one handover, and the application locks the shared found report so only one of its claims can complete a handover. Evidence is not required, and claim status is not an eligibility condition.
+9. **Campus Summary** (`/admin/campus-summary`): ADMIN-only, read-only totals, the share of found items handed over, category and location report counts with stacked bars, and recent lost/found activity. It does not show private claims or change any report.
 
-The homepage shows Sign In to visitors and Sign Out, My Claims, and Campus Summary where appropriate for signed-in users. Feature pages include Home navigation; forms retain input on failure and show success/error feedback, pending states, and next-action links without automatically redirecting after success.
+Navigation is organised around tasks: **Search**, **My Reports**, **My Claims** (and **Campus Summary** for ADMIN), plus a highlighted **Report an item** menu (lost or found). Evidence and handover are reached from each claim, and possible matches from each lost report, so they don't crowd the header. Below 1280px the header collapses into an accessible menu. When a visitor opens a page that needs an account, Sign In explains why and returns them there afterwards (`?next=`, accepted only for known in-app paths, so it cannot redirect off-site). Forms keep input on failure (error messages say so), show per-field errors linked with `aria-describedby`, move focus to the first invalid field, disable the submit button while pending (preventing duplicate submissions) and show the next step after success. Routes have loading skeletons, a 404 page and an error boundary.
+
+## Screenshots
+
+Captured from the running production build with fictional demo data (October 2026):
+
+| | |
+| --- | --- |
+| ![Home](docs/screenshots/home.png) Home | ![Search](docs/screenshots/search.png) Search (found items) |
+| ![Possible matches](docs/screenshots/potential-matches.png) Possible matches | ![My Claims](docs/screenshots/my-claims.png) My Claims |
+| ![Campus Summary](docs/screenshots/campus-summary.png) ADMIN Campus Summary | ![Report a lost item](docs/screenshots/report-lost-item.png) Report form |
+| ![My Reports](docs/screenshots/my-reports.png) My Reports | ![Sign In](docs/screenshots/sign-in.png) Sign In |
+
+Mobile (390px): [home](docs/screenshots/home-mobile.png).
+
+## Design system
+
+`app/globals.css` defines the tokens (exposed to Tailwind through `@theme`) and a small set of component classes; `components/` holds the shared React pieces (`ui.tsx`, `form.tsx`, `icons.tsx`, `site-header.tsx`, `report-form.tsx`).
+
+- **Colour:** warm paper background `#f6f4ef`, ink `#17211d`; brand/found **evergreen** `#0f5c48`; accent **marigold** `#f0b13f`; lost **terracotta** `#b4432b`; claims **slate blue** `#2b5b8a`. Each report card has a coloured rail so lost, found, match, claim and completed states are distinguishable at a glance (always with a text badge as well, never colour alone).
+- **Type:** Fraunces (display headings) and Plus Jakarta Sans (UI), self-hosted by `next/font`.
+- **Accessibility:** all text pairs meet WCAG AA (most AAA; e.g. muted text 5.9:1, placeholders 4.8:1, white on brand 7.9:1); form borders meet 3:1 (4.1:1); visible focus rings; 44px touch targets; skip link; `prefers-reduced-motion` respected; SVG icons are decorative (`aria-hidden`).
 
 ## Technology stack
 
@@ -52,32 +74,37 @@ The application uses `Xenova/all-MiniLM-L6-v2`, the Transformers.js model distri
 
 ### Advanced DBMS concepts implemented
 
-- **Transactions and locking:** claim, evidence, and handover actions use `BEGIN`/`COMMIT`/`ROLLBACK` on a checked-out client. Parent-row locks serialize competing submissions. Savepoints support claim/handover ID collision retries. Evidence numbering uses `MAX(Evidence_No) + 1` under the claim lock, with an INT overflow guard. `db/transactions.sql` separately demonstrates atomic commit and rollback.
+- **Transactions and locking:** claim, evidence, handover, report-edit and claim-withdrawal actions use `BEGIN`/`COMMIT`/`ROLLBACK` on a checked-out client. Withdrawal and handover lock `FOUND_REPORT` then `CLAIM` in the same order, so they cannot deadlock. Parent-row locks serialize competing submissions. Savepoints support claim/handover ID collision retries. Evidence numbering uses `MAX(Evidence_No) + 1` under the claim lock, with an INT overflow guard. `db/transactions.sql` separately demonstrates atomic commit and rollback.
 - **Views:** `v_lost_report_details` and `v_found_report_details` join category/location details; the found view aggregates photo counts. Neither exposes password hashes or embeddings.
 - **Stored functions:** `get_claim_summary(claim_id)` returns claim/found IDs, evidence count, and optional handover ID. `find_potential_matches` provides vector retrieval. Both are read-only, `STABLE`, and `SECURITY INVOKER`; application authorization remains necessary.
-- **Triggers:** changes to `Item_Name` or `Description` invalidate a report's embedding by setting it to NULL. Triggers do not regenerate embeddings.
+- **Triggers:** changes to `Item_Name` or `Description` invalidate a report's embedding by setting it to NULL. The app's Edit report workflow exercises this live and stores the regenerated vector in a second `UPDATE` within the same transaction.
+- **DML coverage in the application:** `INSERT` (reports, claims, evidence, handover), `SELECT` (all pages), `UPDATE` (edit report) and `DELETE` (withdraw claim with its evidence).
 - **Indexing:** primary-key/unique indexes, B-tree indexes on `CLAIM.Found_ID` and `MATCHES.Found_ID`, and HNSW cosine indexes on both report embeddings.
 
 ## Authentication and security
 
 Passwords are hashed and verified with Argon2id. Encrypted sessions contain only `User_ID`; authenticated requests reload the user and role from PostgreSQL. Cookies are HTTP-only, SameSite=Lax, valid for eight hours, and Secure in production.
 
-Database/session helpers are server-only. Queries use parameters, inputs are validated on the server, and actions obtain identity from the authenticated session rather than browser fields. Only claim owners can add evidence or record receipt, including ADMIN users; there is no admin override. Missing and foreign claims receive the same safe error. Public search selects report information without user contact fields, password hashes, or embeddings.
+Database/session helpers are server-only. Queries use parameters, inputs are validated on the server, and actions obtain identity from the authenticated session rather than browser fields. Only claim owners can add evidence or record receipt, including ADMIN users; there is no admin override. Missing and foreign claims receive the same safe error. Public search selects report information without user contact fields, password hashes, or embeddings. Search runs in server-only code (`lib/search.ts`) rather than as a publicly callable Server Action.
 
 ## Project structure
 
 ```text
 app/
-  actions/             # Auth, reports, search, claims, evidence, handover
+  actions/             # Server Actions: auth, reports, report edit, claims/withdraw, evidence, handover
   login/               # Login page/form
   lost-report/         # Lost report page/form
   found-report/        # Found report page/form
   search/              # Public search
   potential-matches/   # Owned lost-report similarity results
-  claim/               # My Claims and submission, evidence/, handover/
+  my-reports/          # Own reports list and edit/
+  claim/               # My Claims, submission, withdrawal, evidence/, handover/
   admin/campus-summary/# ADMIN-only campus totals and activity
   page.tsx             # Homepage/navigation
-lib/                   # Database, auth, session, password, embedding, matching
+components/            # Design-system components: header/nav, UI primitives, forms, icons, report form
+lib/                   # Database, auth, session, password, embedding, matching, search, report writes
+scripts/               # backfill-embeddings.mjs (fills NULL report embeddings)
+tests/                 # Database/action regression suite and optional real-browser checks
 db/                    # Schema, seed, verification, views, functions, triggers, indexes
 docs/                  # College requirements, report, demo checklist, diagrams, screenshots
 .env.example           # Empty environment-variable template
@@ -162,7 +189,15 @@ WHERE "User_ID" = 1 AND "Role" = 'USER'
 
 Do not run that update against an existing account with a real hash. Clear the temporary `$hash` variable after provisioning (`Remove-Variable hash`) and keep passwords and hashes out of tracked files, slides, screenshots, and logs. Use only the credentials you provisioned locally to sign in.
 
-### 4. Start the application
+### 4. Generate embeddings for the seed data
+
+Seed reports are inserted without vectors. Once `.env.local` is configured, fill them so Possible matches has candidates (one transaction; only NULL embeddings are touched; the first run downloads the model):
+
+```sh
+npm run db:backfill-embeddings
+```
+
+### 5. Start the application
 
 ```sh
 npm run dev
@@ -179,11 +214,12 @@ npm run build
 npm start
 ```
 
-`npm start` serves the completed production build. There is no dedicated automated-test npm script. Run `node tests/handover.mjs` for the focused database/action regressions. Add `--browser` to that command for real-browser coverage; this requires a running production server at `http://127.0.0.1:3102` and an isolated Chrome debugging endpoint at `http://127.0.0.1:9224` by default. Both modes use the configured development database and temporary fixtures, so run only against a backed-up local test database without concurrent writes. See the setup comments in `tests/handover.mjs` and `tests/polish-browser.mjs`. These scripts are not required to initialize the database.
+`npm start` serves the completed production build. Run `npm test` (`node tests/handover.mjs`) for the database/action regressions, and `npm run test:browser` for real-browser coverage; this requires a running production server at `http://127.0.0.1:3102` and an isolated Chrome debugging endpoint at `http://127.0.0.1:9224` by default. Both modes use the configured development database and temporary fixtures, so run only against a backed-up local test database without concurrent writes. See the setup comments in `tests/handover.mjs` and `tests/polish-browser.mjs`. These scripts are not required to initialize the database.
 
 ## Current limitations
 
-- Seeded reports have NULL embeddings. New reports generate embeddings, but there is no seed backfill command or automatic regeneration after trigger invalidation.
+- Seeded reports have NULL embeddings until `npm run db:backfill-embeddings` is run (see [db/README.md](db/README.md#embedding-backfill-data-only-no-schema-change)). Editing a report in the app regenerates its vector; text changed outside the app stays NULL until edited or backfilled.
+- Database-level validation is limited to the approved keys/NOT NULL/UNIQUE constraints; further CHECK/UNIQUE constraints are documented as [proposals](db/README.md#proposed-constraints-not-implemented--require-approval) awaiting approval.
 - Similarity suggests potential matches only; it never proves ownership, approves claims, or automatically marks an item returned. Claim/report status values remain NULL in new submissions; no status workflow is implemented.
 - Evidence is description-only; file/photo uploads, digital signatures, administrative editing, and approval workflows are not implemented. Handover records a simple claimant acknowledgement. The ADMIN page is read-only.
 - Login rate limiting is not implemented. Logout deletes the browser cookie; a previously copied stateless session cookie cannot be revoked before expiry.
@@ -195,5 +231,6 @@ npm start
 - [Approved relational schema](docs/lost_found_relational_schema_revised.drawio)
 - [Project report](docs/project_report.md)
 - [Demonstration checklist](docs/demo_checklist.md)
+- [Viva study guide](docs/viva_guide.md)
 
 The original Draw.io diagrams are retained for historical reference. **Team details: [Add team member names, student IDs, and guide details here.]** No verified team roster is recorded in the repository.

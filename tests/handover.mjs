@@ -60,6 +60,8 @@ function loadProduction(relative) {
 const { createHandover } = loadProduction('app/actions/handover.ts');
 const { createClaim } = loadProduction('app/actions/claim.ts');
 const { addClaimEvidence } = loadProduction('app/actions/claim-evidence.ts');
+const { withdrawClaim } = loadProduction('app/actions/claim.ts');
+const { editReport } = loadProduction('app/actions/report-edit.ts');
 const tables = ['USER', 'CATEGORY', 'LOCATION', 'LOST_REPORT', 'FOUND_REPORT',
   'FOUND_PHOTOS', 'MATCHES', 'CLAIM', 'CLAIM_EVIDENCE', 'HANDOVER'];
 const id = -randomInt(100000, 1000000000);
@@ -266,14 +268,32 @@ async function workflowBeforeHandover() {
   await campusSummaryChecks();
   const visitorHome = await renderPage('app/page.tsx', null);
   assert.ok(visitorHome.includes('Sign In'));
-  assert.ok(visitorHome.includes('href="/search"'));
+  assert.ok(visitorHome.includes('action="/search"'));
+  assert.ok(visitorHome.includes('href="/lost-report"') && visitorHome.includes('href="/found-report"'));
   assert.ok(!visitorHome.includes('Sign Out'));
   assert.ok(!visitorHome.includes('href="/claim"'));
   for (const user of [users[0], users[2]]) {
     const home = await renderPage('app/page.tsx', user);
-    assert.ok(home.includes('Sign Out'));
     assert.ok(home.includes('My Claims'));
+    assert.ok(home.includes(user === users[2] ? 'ADMIN account' : 'USER account'));
   }
+  // The shared header carries role-aware navigation and Sign In / Sign Out.
+  const SiteHeader = loadProduction('components/site-header.tsx').default;
+  const header = async (user) => renderToStaticMarkup(await sessions.run(user === null ? null : { User_ID: user }, () => SiteHeader()));
+  const visitorHeader = await header(null);
+  assert.ok(visitorHeader.includes('Sign In') && !visitorHeader.includes('Sign Out'));
+  assert.ok(visitorHeader.includes('Report an item') && !visitorHeader.includes('href="/claim"'));
+  for (const user of [users[0], users[2]]) {
+    const signedIn = await header(user);
+    assert.ok(signedIn.includes('Sign Out') && signedIn.includes('href="/claim"') && signedIn.includes('href="/my-reports"'));
+    assert.equal(signedIn.includes('href="/admin/campus-summary"'), user === users[2]);
+  }
+  // Sign-in return paths accept only known in-app pages (no open redirect).
+  const { safeNextPath, loginPath } = loadProduction('lib/next-path.ts');
+  for (const good of ['/lost-report', '/claim?foundId=-5', '/my-reports/edit?type=lost&id=3', '/admin/campus-summary']) assert.equal(safeNextPath(good), good);
+  for (const bad of ['https://example.com', '//example.com', '/\\example.com', '/login', '/', '/lost-report/../admin', 'javascript:alert(1)', ['/claim'], '/claim?x=<script>']) assert.equal(safeNextPath(bad), null);
+  assert.equal(loginPath('/lost-report'), '/login?next=%2Flost-report');
+  assert.equal(loginPath('https://example.com'), '/login');
   const selected = await renderPage('app/claim/page.tsx', users[0], { foundId: String(reports[3]) });
   assert.ok(selected.match(new RegExp(`<option[^>]*value="${reports[3]}"[^>]*selected`)));
   for (const foundId of ['invalid', '2147483648', [String(reports[3])], String(reports[0])]) {
@@ -321,7 +341,7 @@ async function workflowBeforeHandover() {
   console.log('PASS polish: safe report/search query failures and recovery links');
   const history = await renderPage('app/claim/page.tsx', users[0], { User_ID: String(users[1]) });
   assert.ok(history.includes('My Claims'));
-  assert.ok(history.includes('Submit a Claim'));
+  assert.ok(history.includes('Claim another found item'));
   assert.deepEqual(historyIds(history), [claims[0], claims[2], claims[4]]);
   assert.ok(history.includes('Regression category'));
   assert.ok(history.includes('Regression location (Regression building)'));
@@ -358,7 +378,7 @@ async function workflowBeforeHandover() {
   assert.equal(historyIds(refreshed)[0], createdClaimId);
   const card = claimCard(refreshed, createdClaimId);
   assert.ok(card.includes(`/claim/evidence?claimId=${createdClaimId}#evidence-${createdClaimId}`));
-  assert.ok(card.includes('Add Evidence'));
+  assert.ok(card.includes('Add evidence'));
   assert.ok(card.includes(`/claim/handover?claimId=${createdClaimId}`));
   console.log('PASS Batch 2 D/E/P/T: committed ID returned, refreshed history, real overlapping duplicate prevention, no mutation redirect');
 
@@ -409,8 +429,9 @@ async function workflowBeforeHandover() {
   assert.deepEqual(invalidatedPaths.slice(evidenceOffset), ['/claim', '/claim/evidence', '/claim', '/claim/evidence']);
   const afterEvidence = await renderPage('app/claim/page.tsx', users[0]);
   const evidenceCard = claimCard(afterEvidence, createdClaimId);
-  assert.ok(evidenceCard.includes('Evidence count: </dt><dd class="inline">2</dd>'));
-  assert.ok(evidenceCard.includes('View / Add Evidence'));
+  assert.ok(evidenceCard.includes('data-evidence-count="2"'));
+  assert.ok(evidenceCard.includes('View or add evidence'));
+  assert.ok(evidenceCard.includes('Confirm item received'), 'With evidence added, confirming receipt becomes the next step');
   assert.ok(!afterEvidence.includes('Private regression ownership detail'));
   const reloadedEvidence = await renderPage(evidencePage, users[0], { claimId: String(createdClaimId) });
   assert.ok(reloadedEvidence.includes(`id="evidence-${createdClaimId}"`));
@@ -468,6 +489,127 @@ async function workflowAfterHandover(createdClaimId) {
   assert.ok(empty.includes('Back to My Claims'));
   console.log('PASS eligible selector: owned options, preselection, and completed-history empty state');
   console.log('PASS Batch 2 J/K/L: availability, own receipt/date, competing-claim receipt, and handover revalidation');
+}
+
+function withdraw(userId, claimId) {
+  const data = new FormData();
+  data.set('claimId', String(claimId));
+  data.set('User_ID', String(users[1]));
+  return sessions.run(userId === null ? null : { User_ID: userId }, () => withdrawClaim({ error: null, success: null }, data));
+}
+
+async function claimAs(userId, foundId) {
+  const data = new FormData();
+  data.set('foundId', String(foundId));
+  const result = await sessions.run({ User_ID: userId }, () => createClaim({ error: null, success: null }, data));
+  await trackFixtureClaims();
+  assert.equal(result.error, null);
+  return result.claimId;
+}
+
+async function claimRows(claimId) {
+  return (await pool.query(`SELECT (SELECT COUNT(*) FROM public."CLAIM" WHERE "Claim_ID" = $1)::int AS claims,
+    (SELECT COUNT(*) FROM public."CLAIM_EVIDENCE" WHERE "Claim_ID" = $1)::int AS evidence,
+    (SELECT COUNT(*) FROM public."HANDOVER" WHERE "Claim_ID" = $1)::int AS handovers`, [claimId])).rows[0];
+}
+
+// DELETE workflow: owner-only, atomic with evidence, blocked after handover,
+// and safe when racing a handover on the same found report.
+async function withdrawChecks() {
+  const open = id - 4;
+  const racing = id - 5;
+  reports.push(open, racing);
+  await pool.query('INSERT INTO public."FOUND_REPORT" ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name") VALUES ($1, $3, $4, $4, $5), ($2, $3, $4, $4, $5)', [open, racing, users[2], id, 'Regression withdraw item']);
+
+  const claimId = await claimAs(users[0], open);
+  for (const description of ['First withdrawal detail', 'Second withdrawal detail']) {
+    const evidence = new FormData();
+    evidence.set('claimId', String(claimId));
+    evidence.set('description', description);
+    assert.equal((await sessions.run({ User_ID: users[0] }, () => addClaimEvidence({ error: null, success: null }, evidence))).error, null);
+  }
+  for (const user of [users[1], users[2]]) {
+    assert.equal((await withdraw(user, claimId)).error, 'Claim not found or unavailable to your account.');
+  }
+  assert.equal((await withdraw(null, claimId)).error, 'Please sign in to withdraw a claim.');
+  assert.ok((await withdraw(users[0], 'not-an-id')).error);
+  assert.deepEqual(await claimRows(claimId), { claims: 1, evidence: 2, handovers: 0 });
+
+  const withdrawn = await withdraw(users[0], claimId);
+  assert.equal(withdrawn.error, null);
+  assert.equal(withdrawn.success, 'Claim withdrawn. 2 evidence entries were removed with it.');
+  assert.deepEqual(await claimRows(claimId), { claims: 0, evidence: 0, handovers: 0 });
+  console.log('PASS withdraw: owner-only DELETE removes the claim and its evidence atomically');
+
+  const handedClaim = await claimAs(users[0], open);
+  assert.equal((await submit(users[0], handedClaim)).error, null);
+  assert.equal((await withdraw(users[0], handedClaim)).error, 'This claim has a recorded handover and cannot be withdrawn.');
+  assert.deepEqual(await claimRows(handedClaim), { claims: 1, evidence: 0, handovers: 1 });
+  console.log('PASS withdraw: a claim with a recorded handover cannot be withdrawn');
+
+  // Both transactions wait on the same FOUND_REPORT lock; exactly one wins and no deadlock occurs.
+  const raceClaim = await claimAs(users[0], racing);
+  const outcomes = await overlapping(racing, [() => withdraw(users[0], raceClaim), () => submit(users[0], raceClaim)]);
+  assert.equal(outcomes.filter((result) => result.success && !result.error).length, 1);
+  const state = await claimRows(raceClaim);
+  assert.ok((state.claims === 0 && state.handovers === 0) || (state.claims === 1 && state.handovers === 1), 'Withdrawal and handover must not both apply');
+  console.log('PASS withdraw: overlapping withdrawal and handover serialize on the found-report lock');
+}
+
+function editForm(fields) {
+  const data = new FormData();
+  for (const [name, value] of Object.entries(fields)) data.set(name, String(value));
+  return data;
+}
+
+// UPDATE workflow and the invalidate_report_embedding trigger.
+async function editReportChecks() {
+  const lostId = id;
+  const vector = `[${Array(384).fill(0.05).join(',')}]`;
+  await pool.query(`INSERT INTO public."LOST_REPORT" ("Lost_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name", "Description", "Date_Lost", "Embedding")
+    VALUES ($1, $2, $3, $3, 'Regression umbrella', 'Black folding umbrella', DATE '2026-09-01', $4::public.vector(384))`, [lostId, users[0], id, vector]);
+  const row = async () => (await pool.query(`SELECT "Item_Name", "Description", "Date_Lost"::text AS date,
+    "Embedding"::text AS embedding, public.vector_dims("Embedding") AS dims
+    FROM public."LOST_REPORT" WHERE "Lost_ID" = $1`, [lostId])).rows[0];
+  const original = await row();
+
+  // The trigger itself: changing the description clears the stored vector,
+  // while a date-only change does not. Rolled back so nothing persists.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE public."LOST_REPORT" SET "Date_Lost" = $2::date WHERE "Lost_ID" = $1', [lostId, '2026-09-02']);
+    assert.notEqual((await client.query('SELECT "Embedding" FROM public."LOST_REPORT" WHERE "Lost_ID" = $1', [lostId])).rows[0].Embedding, null);
+    await client.query('UPDATE public."LOST_REPORT" SET "Description" = $2 WHERE "Lost_ID" = $1', [lostId, 'Changed text']);
+    assert.equal((await client.query('SELECT "Embedding" FROM public."LOST_REPORT" WHERE "Lost_ID" = $1', [lostId])).rows[0].Embedding, null);
+    await client.query('ROLLBACK');
+  } finally { client.release(); }
+  assert.deepEqual(await row(), original);
+  console.log('PASS trigger: a description UPDATE sets Embedding to NULL; a date-only UPDATE keeps it (rolled back)');
+
+  const base = { kind: 'lost', reportId: lostId, itemName: 'Regression umbrella', description: 'Black folding umbrella', categoryId: id, locationId: id, dateLost: '2026-09-03' };
+  const asUser = (userId, fields) => sessions.run({ User_ID: userId }, () => editReport({ error: null, success: null }, editForm(fields)));
+  assert.equal((await asUser(users[1], base)).error, 'Report not found or unavailable to your account.');
+  assert.equal((await asUser(users[0], { ...base, dateLost: '2999-01-01' })).fieldErrors.dateLost, 'The date cannot be in the future.');
+  assert.equal((await asUser(users[0], { ...base, kind: 'other' })).error, 'Choose a valid report.');
+  assert.deepEqual(await row(), original);
+
+  assert.equal((await asUser(users[0], base)).error, null);
+  const afterDate = await row();
+  assert.equal(afterDate.date, '2026-09-03');
+  assert.equal(afterDate.embedding, original.embedding, 'Unchanged text keeps the existing vector');
+
+  const retexted = await asUser(users[0], { ...base, description: '  Navy blue folding umbrella with a wooden handle  ' });
+  assert.equal(retexted.error, null);
+  const afterText = await row();
+  assert.equal(afterText.Description, 'Navy blue folding umbrella with a wooden handle');
+  assert.equal(afterText.dims, 384);
+  assert.notEqual(afterText.embedding, original.embedding, 'Changed text stores a fresh vector in the same transaction');
+  console.log('PASS edit: owner-only UPDATE, future-date rejection, vector kept for unchanged text and regenerated for new text');
+
+  const closed = await asUser(users[2], { kind: 'found', reportId: reports[0], itemName: 'Renamed', description: 'Renamed', categoryId: id, locationId: id, dateFound: '2026-09-01' });
+  assert.equal(closed.error, 'This item has already been handed over, so its report can no longer be edited.');
+  console.log('PASS edit: found reports with a recorded handover are closed for edits');
 }
 
 async function run() {
@@ -564,6 +706,8 @@ async function run() {
     await workflowAfterHandover(createdClaimId);
     const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
     assert.ok((await getFoundReportContext(reports, users[0])).every((row) => row.Has_Handover));
+    await withdrawChecks();
+    await editReportChecks();
     if (process.argv.includes('--browser')) {
       const { runBrowserChecks } = await import('./polish-browser.mjs');
       await runBrowserChecks({ users, reports, id, pool });
@@ -593,7 +737,9 @@ async function run() {
 }
 
 run().catch((error) => {
-  console.error(`FAIL: ${error.message}`);
+  // Report the failing test line (not data) to make failures actionable.
+  const where = error.stack?.split('\n').find((line) => /[\\/]tests[\\/]/.test(line)) ?? '';
+  console.error(`FAIL: ${error.message}${where}`);
   process.exitCode = 1;
 }).finally(async () => {
   await pool.end();
