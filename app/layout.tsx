@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Fraunces, Plus_Jakarta_Sans } from "next/font/google";
 import SiteHeader from "@/components/site-header";
@@ -13,8 +13,6 @@ export const metadata: Metadata = {
   title: { default: "Campus Lost & Found", template: "%s · Campus Lost & Found" },
   description: "Smart Lost and Found Management System — a college DBMS Level 3 project built on PostgreSQL and pgvector.",
 };
-
-export const viewport: Viewport = { themeColor: "#0f5c48" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

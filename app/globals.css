@@ -45,7 +45,6 @@
 }
 
 @layer base {
-  html { -webkit-text-size-adjust: 100%; }
   body {
     background: var(--color-paper);
     color: var(--color-ink);
