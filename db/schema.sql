@@ -1,6 +1,9 @@
 -- Initial approved schema. Execute once against smart_lost_found with:
 -- psql -X -v ON_ERROR_STOP=1 -d smart_lost_found -f db/schema.sql
 -- IDs are supplied explicitly; no identity columns or defaults are approved.
+-- Revision 2026-10-16: named CHECK/UNIQUE integrity constraints were added
+-- (see "Integrity constraints" in db/README.md). Existing databases receive
+-- them through db/constraints.sql.
 
 BEGIN;
 
@@ -27,7 +30,9 @@ CREATE TABLE public."USER" (
     "Email" VARCHAR(100),
     "Phone" VARCHAR(15),
     "Role" VARCHAR(20),
-    "Password_Hash" VARCHAR(255) NOT NULL
+    "Password_Hash" VARCHAR(255) NOT NULL,
+    CONSTRAINT "USER_Role_check" CHECK ("Role" IN ('USER', 'ADMIN')),
+    CONSTRAINT "USER_Email_key" UNIQUE ("Email")
 );
 
 CREATE TABLE public."CATEGORY" (
@@ -50,7 +55,8 @@ CREATE TABLE public."LOST_REPORT" (
     "Description" TEXT,
     "Date_Lost" DATE,
     "Status" VARCHAR(20),
-    "Embedding" VECTOR(384)
+    "Embedding" VECTOR(384),
+    CONSTRAINT "LOST_REPORT_Item_Name_check" CHECK (btrim("Item_Name") <> '')
 );
 
 CREATE TABLE public."FOUND_REPORT" (
@@ -62,7 +68,8 @@ CREATE TABLE public."FOUND_REPORT" (
     "Description" TEXT,
     "Date_Found" DATE,
     "Status" VARCHAR(20),
-    "Embedding" VECTOR(384)
+    "Embedding" VECTOR(384),
+    CONSTRAINT "FOUND_REPORT_Item_Name_check" CHECK (btrim("Item_Name") <> '')
 );
 
 CREATE TABLE public."FOUND_PHOTOS" (
@@ -85,7 +92,8 @@ CREATE TABLE public."CLAIM" (
     "User_ID" INT NOT NULL REFERENCES public."USER" ("User_ID"),
     "Found_ID" INT NOT NULL REFERENCES public."FOUND_REPORT" ("Found_ID"),
     "Claim_Date" DATE,
-    "Status" VARCHAR(20)
+    "Status" VARCHAR(20),
+    CONSTRAINT "CLAIM_User_ID_Found_ID_key" UNIQUE ("User_ID", "Found_ID")
 );
 
 CREATE TABLE public."HANDOVER" (
@@ -100,7 +108,8 @@ CREATE TABLE public."CLAIM_EVIDENCE" (
     "Evidence_No" INT,
     "Evidence_Description" VARCHAR(255),
     "File_Path" VARCHAR(255),
-    PRIMARY KEY ("Claim_ID", "Evidence_No")
+    PRIMARY KEY ("Claim_ID", "Evidence_No"),
+    CONSTRAINT "CLAIM_EVIDENCE_Evidence_No_check" CHECK ("Evidence_No" >= 1)
 );
 
 COMMIT;

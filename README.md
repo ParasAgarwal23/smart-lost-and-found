@@ -64,7 +64,7 @@ The ten relations live in PostgreSQL's `public` schema. Quoted identifiers prese
 | `CLAIM_EVIDENCE` | Weak entity with key `(Claim_ID, Evidence_No)`; `Evidence_No` is the partial key |
 | `HANDOVER` | Receipt acknowledgement; required, unique `Claim_ID` references `CLAIM` |
 
-The unique handover `Claim_ID` enforces the approved 1:1 relationship: a handover belongs to one claim, and a claim may have zero or one handover. Photo references and stored matches exist in the schema/demo data; the application does not upload photos or automatically persist vector results into `MATCHES`.
+Named CHECK and UNIQUE constraints also validate roles, unique emails, non-blank item names, evidence numbering and one claim per user per item ([details](db/README.md#integrity-constraints-check-and-unique)). The unique handover `Claim_ID` enforces the approved 1:1 relationship: a handover belongs to one claim, and a claim may have zero or one handover. Photo references and stored matches exist in the schema/demo data; the application does not upload photos or automatically persist vector results into `MATCHES`.
 
 ### Embeddings and similarity
 
@@ -139,6 +139,8 @@ foreach ($script in $scripts) {
     if ($LASTEXITCODE -ne 0) { throw "Database setup failed: $script" }
 }
 ```
+
+**Upgrading a database created before 2026-10-16:** run `db/constraints.sql` once to add the named integrity constraints (it refuses to run if existing rows conflict, and is a no-op on fresh installs).
 
 `schema.sql`, relational/vector index creation, and `seed.sql` are one-time operations and must not be blindly rerun. Seed data contains fictional users, categories, locations, reports, matches, evidence, and handovers. `verify.sql` is read-only and checks tables, columns, nullability, keys, and the vector extension. See [database documentation](db/README.md) for script details.
 
@@ -219,7 +221,7 @@ npm start
 ## Current limitations
 
 - Seeded reports have NULL embeddings until `npm run db:backfill-embeddings` is run (see [db/README.md](db/README.md#embedding-backfill-data-only-no-schema-change)). Editing a report in the app regenerates its vector; text changed outside the app stays NULL until edited or backfilled.
-- Database-level validation is limited to the approved keys/NOT NULL/UNIQUE constraints; further CHECK/UNIQUE constraints are documented as [proposals](db/README.md#proposed-constraints-not-implemented--require-approval) awaiting approval.
+- Rules that need the current date or more than one table (dates not in the future, one handover per found item) are enforced by the application and row locks rather than CHECK constraints; see [Integrity constraints](db/README.md#integrity-constraints-check-and-unique).
 - Similarity suggests potential matches only; it never proves ownership, approves claims, or automatically marks an item returned. Claim/report status values remain NULL in new submissions; no status workflow is implemented.
 - Evidence is description-only; file/photo uploads, digital signatures, administrative editing, and approval workflows are not implemented. Handover records a simple claimant acknowledgement. The ADMIN page is read-only.
 - Login rate limiting is not implemented. Logout deletes the browser cookie; a previously copied stateless session cookie cannot be revoked before expiry.

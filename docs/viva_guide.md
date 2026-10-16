@@ -26,7 +26,7 @@ A revision sheet built from the actual code. Each topic gives the idea in plain 
 - **NOT NULL on FKs:** every report must have an owner, category and location.
 - **UNIQUE:** `HANDOVER.Claim_ID` means one receipt per claim.
 - **Normalization:** category and location names are stored once in lookup tables, not repeated in every report, so renaming a building is one `UPDATE` (no update anomaly). The tables are in 3NF: every non-key attribute depends only on its table's key.
-- **Honest limitation:** the approved schema has no CHECK constraints, so rules like "role is USER or ADMIN" are enforced by the application (Zod). The proposed constraints are listed in [db/README.md](../db/README.md#proposed-constraints-not-implemented--require-approval) and need approval because they change the schema.
+- **Value rules in the database (§12):** six named constraints back up the application's validation: `USER_Role_check` (USER/ADMIN only), `USER_Email_key`, non-blank `Item_Name` checks on both report tables, `CLAIM_EVIDENCE_Evidence_No_check` (≥ 1) and `CLAIM_User_ID_Found_ID_key` (one claim per user per item). The brief asks for database-level validation but does not mandate CHECK constraints — these were chosen because the app genuinely depends on each rule. Rules needing `CURRENT_DATE` or several tables can't be CHECK constraints, so they stay in the application. Demo: `INSERT INTO "USER" ("User_ID", "Role", "Password_Hash") VALUES (-9, 'SUPERUSER', 'x');` fails with `USER_Role_check`.
 - **Rule the schema can't express:** "only one handover per *found item*" spans several claims. It's enforced by locking the `FOUND_REPORT` row (`SELECT … FOR UPDATE`) before checking, in `app/actions/handover.ts`.
 
 ## 4. Advanced concepts (§7) — what, where, and why
@@ -81,4 +81,4 @@ Every query uses `$1` parameters (no string concatenation), which prevents SQL i
 - *Why is `Status` always NULL?* No status vocabulary was approved; progress is **derived** from evidence/handover rows instead of being stored, which avoids inconsistent duplicate state.
 - *Why isn't the HNSW index used?* Exact ranking is cheap for a campus-sized table and gives deterministic results; HNSW is ready for direct `ORDER BY "Embedding" <=> $1 LIMIT k` queries at larger scale.
 - *What if two users claim at the same time?* The FOUND_REPORT row lock serializes them; the test suite proves it with genuinely overlapping transactions.
-- *Limitations / future work:* the proposed CHECK/UNIQUE constraints (need approval), login rate limiting, revocable sessions, file uploads for evidence.
+- *Limitations / future work:* login rate limiting, revocable sessions, file uploads for evidence.
