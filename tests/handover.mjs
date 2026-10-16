@@ -612,6 +612,60 @@ async function editReportChecks() {
   console.log('PASS edit: found reports with a recorded handover are closed for edits');
 }
 
+// Database-level integrity constraints (db/constraints.sql). Everything runs in
+// one transaction that is rolled back, so no rows persist.
+async function constraintChecks() {
+  const client = await pool.connect();
+  const u = id - 500;
+  const attempt = async (label, sql, values, expected) => {
+    await client.query('SAVEPOINT attempt');
+    try {
+      await client.query(sql, values);
+      await client.query('RELEASE SAVEPOINT attempt');
+      assert.equal(expected, null, `${label}: expected ${expected?.constraint} to reject the row`);
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT attempt');
+      if (expected === null) throw error;
+      assert.equal(error.code, expected.code, `${label}: SQLSTATE`);
+      assert.equal(error.constraint, expected.constraint, `${label}: constraint name`);
+    }
+  };
+  const check = (constraint) => ({ code: '23514', constraint });
+  const unique = (constraint) => ({ code: '23505', constraint });
+  try {
+    await client.query('BEGIN');
+    const user = 'INSERT INTO public."USER" ("User_ID", "Email", "Role", "Password_Hash") VALUES ($1, $2, $3, \'UNUSABLE_REGRESSION_FIXTURE\')';
+    await attempt('valid USER role', user, [u, `c-${-u}@example.invalid`, 'USER'], null);
+    await attempt('NULL role allowed (approved nullability)', user, [u - 1, null, null], null);
+    await attempt('second NULL email allowed', user, [u - 2, null, 'ADMIN'], null);
+    await attempt('unknown role', user, [u - 3, null, 'SUPERUSER'], check('USER_Role_check'));
+    await attempt('lower-case role', user, [u - 3, null, 'admin'], check('USER_Role_check'));
+    await attempt('duplicate email', user, [u - 3, `c-${-u}@example.invalid`, 'USER'], unique('USER_Email_key'));
+
+    const report = (table, key) => `INSERT INTO public."${table}" ("${key}", "User_ID", "Category_ID", "Location_ID", "Item_Name") VALUES ($1, $2, $3, $3, $4)`;
+    for (const [table, key] of [['LOST_REPORT', 'Lost_ID'], ['FOUND_REPORT', 'Found_ID']]) {
+      await attempt(`${table} valid name`, report(table, key), [u, u, id, 'Umbrella'], null);
+      await attempt(`${table} NULL name allowed`, report(table, key), [u - 1, u, id, null], null);
+      for (const blank of ['', '   ']) {
+        await attempt(`${table} blank name`, report(table, key), [u - 2, u, id, blank], check(`${table}_Item_Name_check`));
+      }
+    }
+
+    const claim = 'INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID") VALUES ($1, $2, $3)';
+    await attempt('first claim', claim, [u, u - 2, u], null);
+    await attempt('same user claims same item twice', claim, [u - 1, u - 2, u], unique('CLAIM_User_ID_Found_ID_key'));
+    await attempt('another user may claim the same item', claim, [u - 1, u - 1, u], null);
+
+    const evidence = 'INSERT INTO public."CLAIM_EVIDENCE" ("Claim_ID", "Evidence_No") VALUES ($1, $2)';
+    await attempt('evidence number 1', evidence, [u, 1], null);
+    for (const bad of [0, -1]) await attempt(`evidence number ${bad}`, evidence, [u, bad], check('CLAIM_EVIDENCE_Evidence_No_check'));
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+  console.log('PASS constraints: role, email, item-name, evidence-number and one-claim-per-user rules reject invalid rows and accept valid ones (rolled back)');
+}
+
 async function run() {
   const before = await snapshot();
   try {
@@ -623,6 +677,7 @@ async function run() {
       for (let i = 0; i < claims.length; i++) await client.query('INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID", "Claim_Date") VALUES ($1, $2, $3, CURRENT_DATE)', [claims[i], users[i % 2], reports[Math.floor(i / 2)]]);
     });
     fixturesCreated = true;
+    await constraintChecks();
 
     const createdClaimId = await workflowBeforeHandover();
 

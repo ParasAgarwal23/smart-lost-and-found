@@ -32,19 +32,19 @@ The approved ER and relational diagrams define ten tables. `USER` has the role f
 
 ### Data dictionary
 
-`PK` means primary key, `FK` foreign key, `UQ` unique, and `NN` explicitly not null. Primary-key components are inherently not null. Other attributes are nullable unless marked. All identifiers below are the exact quoted PostgreSQL names.
+`PK` means primary key, `FK` foreign key, `UQ` unique, `CK` a named CHECK constraint, and `NN` explicitly not null. Primary-key components are inherently not null. Other attributes are nullable unless marked. All identifiers below are the exact quoted PostgreSQL names.
 
 | Relation | Columns: type and key/requirement |
 | --- | --- |
-| `USER` | `User_ID` INT PK; `Name` VARCHAR(100); `Email` VARCHAR(100); `Phone` VARCHAR(15); `Role` VARCHAR(20); `Password_Hash` VARCHAR(255) NN |
+| `USER` | `User_ID` INT PK; `Name` VARCHAR(100); `Email` VARCHAR(100) UQ; `Phone` VARCHAR(15); `Role` VARCHAR(20) CK (USER/ADMIN); `Password_Hash` VARCHAR(255) NN |
 | `CATEGORY` | `Category_ID` INT PK; `Category_Name` VARCHAR(50) |
 | `LOCATION` | `Location_ID` INT PK; `Location_Name` VARCHAR(50); `Building` VARCHAR(50) |
-| `LOST_REPORT` | `Lost_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100); `Description` TEXT; `Date_Lost` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
-| `FOUND_REPORT` | `Found_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100); `Description` TEXT; `Date_Found` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
+| `LOST_REPORT` | `Lost_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100) CK (not blank); `Description` TEXT; `Date_Lost` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
+| `FOUND_REPORT` | `Found_ID` INT PK; `User_ID` INT FK→`USER` NN; `Category_ID` INT FK→`CATEGORY` NN; `Location_ID` INT FK→`LOCATION` NN; `Item_Name` VARCHAR(100) CK (not blank); `Description` TEXT; `Date_Found` DATE; `Status` VARCHAR(20); `Embedding` VECTOR(384) |
 | `FOUND_PHOTOS` | `Found_ID` INT FK→`FOUND_REPORT`, PK part; `Photo_URL` VARCHAR(255), PK part |
 | `MATCHES` | `Lost_ID` INT FK→`LOST_REPORT`, PK part; `Found_ID` INT FK→`FOUND_REPORT`, PK part; `Match_Score` DECIMAL(5,2); `Match_Status` VARCHAR(20); `Match_Date` DATE |
-| `CLAIM` | `Claim_ID` INT PK; `User_ID` INT FK→`USER` NN; `Found_ID` INT FK→`FOUND_REPORT` NN; `Claim_Date` DATE; `Status` VARCHAR(20) |
-| `CLAIM_EVIDENCE` | `Claim_ID` INT FK→`CLAIM`, PK part; `Evidence_No` INT PK part; `Evidence_Description` VARCHAR(255); `File_Path` VARCHAR(255) |
+| `CLAIM` | `Claim_ID` INT PK; `User_ID` INT FK→`USER` NN; `Found_ID` INT FK→`FOUND_REPORT` NN; `Claim_Date` DATE; `Status` VARCHAR(20); UQ (`User_ID`, `Found_ID`) |
+| `CLAIM_EVIDENCE` | `Claim_ID` INT FK→`CLAIM`, PK part; `Evidence_No` INT PK part, CK (≥ 1); `Evidence_Description` VARCHAR(255); `File_Path` VARCHAR(255) |
 | `HANDOVER` | `Handover_ID` INT PK; `Claim_ID` INT FK→`CLAIM` NN UQ; `Handover_Date` DATE; `Signature` VARCHAR(100) |
 
 The live application saves text-only evidence (`File_Path = NULL`) and a typed handover acknowledgement. Photo paths and `MATCHES` rows in [seed.sql](../db/seed.sql) are illustrative database records, not uploaded files or automatically approved matches.
@@ -55,7 +55,7 @@ Run the creation scripts in the order in [README setup](../README.md#local-setup
 
 | Concept required by brief | Actual implementation and purpose |
 | --- | --- |
-| DDL, PK/FK/unique constraints | [schema.sql](../db/schema.sql) creates the ten approved relations; [verify.sql](../db/verify.sql) checks table/column/constraint shape without changing data. |
+| DDL, PK/FK/unique constraints | Six named CHECK/UNIQUE constraints (role, unique email, non-blank item names, evidence number ≥ 1, one claim per user per item) validate values at the database level (§12); see [db/README.md](../db/README.md#integrity-constraints-check-and-unique) and the migration [constraints.sql](../db/constraints.sql). [schema.sql](../db/schema.sql) creates the ten approved relations; [verify.sql](../db/verify.sql) checks table/column/constraint shape without changing data. |
 | Joins, grouping, aggregates | [views.sql](../db/views.sql) joins reports to category/location, with a grouped found-photo count. Campus Summary uses separate `COUNT(*)` queries and `UNION ALL` plus `GROUP BY` for category/location totals. |
 | Views | `v_lost_report_details`, `v_found_report_details` expose report context without password hashes or embedding vectors. |
 | Stored functions and subqueries | [functions.sql](../db/functions.sql) defines `get_claim_summary(claim_id)` with a correlated evidence count; [vector_search.sql](../db/vector_search.sql) defines `find_potential_matches`. |
@@ -126,8 +126,8 @@ These images show demonstration data, not an endorsement of report ownership or 
 | Check | Result |
 | --- | --- |
 | `npm run typecheck`, `npm run lint`, `npm run build` | Pass (no errors or warnings) |
-| `db/verify.sql` (read-only) | Pass: 10 tables, 49 columns, 10 PKs, 13 FKs, HANDOVER UNIQUE, vector 0.8.6 |
-| `npm test` (`tests/handover.mjs`) | 35 checks pass (including role-aware header navigation and rejection of unsafe sign-in return paths): role guards, claim/evidence/handover authorization, duplicate and *overlapping* handovers, evidence numbering, search states, safe error messages, **claim withdrawal** (owner-only, atomic with evidence, blocked after handover, overlapping withdraw-vs-handover yields exactly one outcome), **trigger** (description update nulls the vector, date update keeps it), **report edit** (owner-only, future dates rejected, vector kept for unchanged text and regenerated for new text, closed after handover), and exact restoration of all ten tables |
+| `db/verify.sql` (read-only) | Pass: 10 tables, 49 columns, 10 PKs, 13 FKs, 3 UNIQUE and 4 CHECK constraints, vector 0.8.6 |
+| `npm test` (`tests/handover.mjs`) | 36 checks pass (including the six integrity constraints rejecting invalid rows and accepting valid ones, role-aware header navigation and rejection of unsafe sign-in return paths): role guards, claim/evidence/handover authorization, duplicate and *overlapping* handovers, evidence numbering, search states, safe error messages, **claim withdrawal** (owner-only, atomic with evidence, blocked after handover, overlapping withdraw-vs-handover yields exactly one outcome), **trigger** (description update nulls the vector, date update keeps it), **report edit** (owner-only, future dates rejected, vector kept for unchanged text and regenerated for new text, closed after handover), and exact restoration of all ten tables |
 | `npm run test:browser` | 9 further browser checks pass in headless Chrome: sign-in explains why it is needed, returns to the requested page and ignores external `next` values; real Argon2id login/logout, every protected route redirects, ADMIN-only navigation and totals matching independent SQL, draft preservation, real 384-dimension embeddings, the full claim → evidence → handover journey, claim withdrawal with confirmation and an announced result, and no horizontal overflow on twelve routes at 320/390/768/1440px with 100-character unbroken names |
 | WCAG contrast of design tokens | All text pairs ≥ 4.5:1 (most ≥ 7:1), including placeholders (4.8:1) and error/success/info/warning notices (7.0–9.3:1); form-control borders 4.1:1; focus ring 7.9:1 against the page |
 | Embedding integrity (read-only) | All 18 report vectors are 384-dimensional, unit-norm, and identical (cosine 1.000000) to a fresh encoding of each row's current text; the 16 seeded reports' other columns match `db/seed.sql` exactly |

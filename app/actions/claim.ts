@@ -75,6 +75,10 @@ export async function createClaim(
           await client.query("RELEASE SAVEPOINT claim_insert");
           return insertedClaimId;
         } catch (error) {
+          // Database backstop for the eligibility check above (UNIQUE (User_ID, Found_ID)).
+          if (typeof error === "object" && error !== null && "constraint" in error && error.constraint === "CLAIM_User_ID_Found_ID_key") {
+            throw new ClaimError("You have already claimed this found report.");
+          }
           if (!isPrimaryKeyCollision(error)) throw error;
           await client.query("ROLLBACK TO SAVEPOINT claim_insert");
           await client.query("RELEASE SAVEPOINT claim_insert");

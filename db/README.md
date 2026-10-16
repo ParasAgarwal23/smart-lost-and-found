@@ -17,13 +17,13 @@ Authenticate through PostgreSQL's interactive password prompt or a local passwor
 
 `schema.sql` is a one-time creation script, not a rerunnable migration. It uses a transaction and plain CREATE TABLE, so existing table names cause an error rather than being overwritten or silently accepted. With ON_ERROR_STOP enabled, a failure aborts execution and disconnecting rolls back the transaction. The script does not create, update, or reinstall the vector extension.
 
-`verify.sql` is read-only and raises an error if the expected tables, column types/nullability, keys, or extension are missing or incorrect. It also lists all primary, foreign, and unique constraints for review. It inserts no sample data and creates no stored functions.
+`verify.sql` is read-only and raises an error if the expected tables, column types/nullability, keys, CHECK/UNIQUE constraints, or extension are missing or incorrect. It also lists all primary, foreign, and unique constraints for review. It inserts no sample data and creates no stored functions.
 
 Validated on 2026-10-01 against the local `smart_lost_found` database with PostgreSQL 18.6 and vector 0.8.6. Schema creation committed successfully, and every verification assertion passed: ten tables, 49 columns, ten primary keys, thirteen foreign keys, both VECTOR(384) columns, and the approved nullability and HANDOVER uniqueness.
 
 ## Deliberately deferred
 
-IDs use INT with no automatic generation. No business-rule checks, additional uniqueness rules, defaults, cascades, permanent sample data, or embedding generation are included. PostgreSQL supplies the indexes required by primary keys and the HANDOVER Claim_ID unique constraint. Foreign keys use PostgreSQL's default NO ACTION behavior; no cascade policy has been added.
+IDs use INT with no automatic generation. No defaults, cascades, permanent sample data, or embedding generation are included. Value rules and extra uniqueness were added later — see [Integrity constraints](#integrity-constraints-check-and-unique). PostgreSQL supplies the indexes required by primary keys and the HANDOVER Claim_ID unique constraint. Foreign keys use PostgreSQL's default NO ACTION behavior; no cascade policy has been added.
 
 HANDOVER Claim_ID is NOT NULL, UNIQUE, and an FK to CLAIM. Every handover references one claim, and each claim can have at most one handover; claims without a handover remain possible.
 
@@ -154,18 +154,24 @@ npm run db:backfill-embeddings                # write
 
 It was run on the local development database on 2026-10-16 and stored 16 embeddings (8 lost, 8 found); afterwards every seeded lost report's top `find_potential_matches(…, 1)` result was its intended found counterpart (cosine similarity 0.64–0.85), even where the wording differs (e.g. "Phone in navy cover" → "Black mobile with blue case").
 
-## Proposed constraints (not implemented — require approval)
+## Integrity constraints (CHECK and UNIQUE)
 
-College requirement §12 asks for input validation at the database level. The approved schema enforces keys, NOT NULL foreign keys and `HANDOVER.Claim_ID UNIQUE`, but intentionally has no CHECK constraints (`verify.sql` asserts exactly 24 PK/FK/UNIQUE constraints). Validation is therefore enforced in the application (Zod schemas in `lib/report-input.ts` and the actions). If the design owners approve a schema revision, these additions would move key rules into PostgreSQL; they would also require updating the ER/relational diagrams and `verify.sql`:
+**Requirement vs. design choice.** The college brief asks the design to identify "appropriate constraints" (§4), the SQL implementation to demonstrate constraints (§5), and "input validation … at the database level" (§12). It does **not** require CHECK constraints specifically. Until 2026-10-16 the database enforced only keys, NOT NULL foreign keys and `HANDOVER.Claim_ID UNIQUE`, while every value rule lived in the application. The following constraints were then added as an *optional design improvement* that moves rules the application already depends on into PostgreSQL. Each one closes a real gap; none changes a column, type, relationship or nullability, and no new status vocabulary or business rule was invented.
 
-```sql
--- PROPOSAL ONLY. Not part of the approved schema; do not run without approval.
-ALTER TABLE public."USER" ADD CONSTRAINT user_role_check CHECK ("Role" IN ('USER', 'ADMIN'));
-ALTER TABLE public."USER" ADD CONSTRAINT user_email_key UNIQUE ("Email");
-ALTER TABLE public."LOST_REPORT" ADD CONSTRAINT lost_item_name_check CHECK (btrim("Item_Name") <> '');
-ALTER TABLE public."FOUND_REPORT" ADD CONSTRAINT found_item_name_check CHECK (btrim("Item_Name") <> '');
-ALTER TABLE public."CLAIM_EVIDENCE" ADD CONSTRAINT evidence_no_check CHECK ("Evidence_No" > 0);
-ALTER TABLE public."CLAIM" ADD CONSTRAINT claim_user_found_key UNIQUE ("User_ID", "Found_ID");
+| Constraint | Rule | Why it is needed |
+| --- | --- | --- |
+| `USER_Role_check` | `CHECK ("Role" IN ('USER', 'ADMIN'))` | Authorization trusts this column; any other value would silently become "no access". NULL is still allowed, as approved. |
+| `USER_Email_key` | `UNIQUE ("Email")` | Sign-in looks users up by email; two accounts sharing an email would both be locked out. PostgreSQL allows multiple NULL emails. |
+| `LOST_REPORT_Item_Name_check`, `FOUND_REPORT_Item_Name_check` | `CHECK (btrim("Item_Name") <> '')` | A whitespace-only name cannot be searched or recognised. NULL stays allowed. |
+| `CLAIM_EVIDENCE_Evidence_No_check` | `CHECK ("Evidence_No" >= 1)` | Domain of the weak entity's partial key; the application numbers evidence 1, 2, 3 … per claim. |
+| `CLAIM_User_ID_Found_ID_key` | `UNIQUE ("User_ID", "Found_ID")` | One claim per user per found item. The claim action already enforces this under a row lock; the constraint is the database backstop (its violation is reported as "You have already claimed this found report."). |
+
+**Considered and rejected:** a `Match_Score` range (column unused, meaning undefined); a `Status` value list (no approved vocabulary); "date not in the future" (depends on `CURRENT_DATE`, which is not allowed in a CHECK constraint; enforced by the application instead); "handover not before claim" and "one handover per found item" (span two tables, so they cannot be CHECK constraints; the latter is enforced by the `FOUND_REPORT` row lock in `app/actions/handover.ts`); non-blank description/evidence/signature (low value; the application already requires them).
+
+**Installation.** `schema.sql` declares the constraints for fresh installs. Existing databases use the migration:
+
+```powershell
+psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/constraints.sql
 ```
 
-The "one handover per found item" rule spans several CLAIM rows, so it cannot be a simple column constraint; it stays enforced by the `FOUND_REPORT` row lock in `app/actions/handover.ts` (a trigger could enforce it in the database, again only with approval). Date checks such as "not in the future" depend on `CURRENT_DATE` and are not suitable as CHECK constraints.
+The migration first checks every rule against the existing rows and stops with a list of conflicts — it never edits or deletes data — then adds each constraint only if it is missing, so it is safe to rerun. On 2026-10-16 it was applied to the local database: all six constraints were added, a second run added nothing, and an MD5 fingerprint of every row in all ten tables was identical before and after. A rolled-back trial of `schema.sql` produced exactly the same 30 constraint definitions as the migrated database. `verify.sql` now expects 10 primary keys, 13 foreign keys, 3 UNIQUE and 4 CHECK constraints (30 in total), and `npm test` checks that each rule rejects invalid rows (SQLSTATE 23514/23505 with the constraint name) while accepting the valid boundary cases.

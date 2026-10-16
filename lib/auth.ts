@@ -46,7 +46,8 @@ export async function authenticateUser(
   if (!parsed.success) return null;
 
   // Exact, case-sensitive email lookup; no unapproved normalization policy.
-  // NULL emails cannot match. LIMIT 2 detects ambiguity without assuming UNIQUE.
+  // NULL emails cannot match. "USER_Email_key" makes emails unique; LIMIT 2
+  // remains a cheap defensive check against ambiguity.
   const result = await query<CredentialRow>(
     `SELECT "User_ID", "Name", "Email", "Phone", "Role", "Password_Hash"
      FROM public."USER" WHERE "Email" = $1 LIMIT 2`,

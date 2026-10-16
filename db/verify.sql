@@ -130,7 +130,14 @@ BEGIN
         ('CLAIM', 'f', 'FOREIGN KEY ("Found_ID") REFERENCES "FOUND_REPORT"("Found_ID")'),
         ('HANDOVER', 'f', 'FOREIGN KEY ("Claim_ID") REFERENCES "CLAIM"("Claim_ID")'),
         ('CLAIM_EVIDENCE', 'f', 'FOREIGN KEY ("Claim_ID") REFERENCES "CLAIM"("Claim_ID")'),
-        ('HANDOVER', 'u', 'UNIQUE ("Claim_ID")')
+        ('HANDOVER', 'u', 'UNIQUE ("Claim_ID")'),
+        -- Integrity constraints added 2026-10-16 (db/constraints.sql).
+        ('USER', 'u', 'UNIQUE ("Email")'),
+        ('CLAIM', 'u', 'UNIQUE ("User_ID", "Found_ID")'),
+        ('USER', 'c', 'CHECK ((("Role")::text = ANY ((ARRAY[''USER''::character varying, ''ADMIN''::character varying])::text[])))'),
+        ('LOST_REPORT', 'c', 'CHECK ((btrim(("Item_Name")::text) <> ''''::text))'),
+        ('FOUND_REPORT', 'c', 'CHECK ((btrim(("Item_Name")::text) <> ''''::text))'),
+        ('CLAIM_EVIDENCE', 'c', 'CHECK (("Evidence_No" >= 1))')
         ) AS approved(table_name, constraint_type, definition)
     LOOP
         IF NOT EXISTS (
@@ -150,10 +157,10 @@ BEGIN
         JOIN pg_class AS t ON t.oid = c.conrelid
         JOIN pg_namespace AS n ON n.oid = t.relnamespace
         WHERE n.nspname = 'public' AND t.relname = ANY(expected_tables)
-            AND c.contype IN ('p', 'f', 'u', 'c', 'x')) <> 24 THEN
-        RAISE EXCEPTION 'Expected only 10 primary keys, 13 foreign keys, and 1 unique constraint';
+            AND c.contype IN ('p', 'f', 'u', 'c', 'x')) <> 30 THEN
+        RAISE EXCEPTION 'Expected only 10 primary keys, 13 foreign keys, 3 unique and 4 check constraints';
     END IF;
-    RAISE NOTICE 'PASS: ten tables, 49 columns, vector 0.8.6, both VECTOR(384) columns, approved NOT NULL constraints, 10 PKs, 13 FKs, and HANDOVER Claim_ID UNIQUE';
+    RAISE NOTICE 'PASS: ten tables, 49 columns, vector 0.8.6, both VECTOR(384) columns, approved NOT NULL constraints, 10 PKs, 13 FKs, 3 UNIQUE and 4 CHECK constraints';
 END
 $$;
 
@@ -165,7 +172,7 @@ JOIN pg_namespace AS n ON n.oid = t.relnamespace
 WHERE n.nspname = 'public'
     AND t.relname IN ('USER', 'CATEGORY', 'LOCATION', 'LOST_REPORT',
         'FOUND_REPORT', 'FOUND_PHOTOS', 'MATCHES', 'CLAIM', 'HANDOVER', 'CLAIM_EVIDENCE')
-    AND c.contype IN ('p', 'f', 'u')
+    AND c.contype IN ('p', 'f', 'u', 'c')
 ORDER BY t.relname, c.contype, definition;
 
 COMMIT;
