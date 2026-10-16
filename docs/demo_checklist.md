@@ -8,7 +8,7 @@ Use the [college brief](DBMS%20Level%203%20Project%20Requirements.pdf) and [proj
 - [ ] Confirm PostgreSQL 18, pgvector 0.8.6, `smart_lost_found`, private `.env.local`, dependencies, model cache/network, and local USER/ADMIN logins. Follow the [README](../README.md#local-setup) on a fresh database; do not rerun `seed.sql` on an occupied database.
 - [ ] Run `npm run db:backfill-embeddings -- --dry-run`; if it reports rows without embeddings, run it without `--dry-run` so every seeded lost report has potential matches.
 - [ ] Have an eligible demo claim available, or create one with a USER account and a different user's found report. A found report with an existing handover cannot be confirmed again. Keep demo credentials private.
-- [ ] Open the revised [ER diagram](lost_found_ER_diagram_revised.drawio), [relational schema](lost_found_relational_schema_revised.drawio), and [SQL scripts](../db/README.md). Check that application screenshots show only fictional demo data.
+- [ ] Open the [ER diagram](lost_found_ER_diagram.drawio), [relational schema](lost_found_relational_schema.drawio), and [SQL scripts](../db/README.md). Check that application screenshots show only fictional demo data.
 
 ## Suggested live sequence
 
@@ -23,6 +23,6 @@ Use the [college brief](DBMS%20Level%203%20Project%20Requirements.pdf) and [proj
 
 ## Submission evidence
 
-- [ ] Submit or link the README, project report, revised Draw.io designs, SQL scripts, application screenshots, tests, and GitHub commit history.
+- [ ] Submit or link the README, project report, ER and relational-schema Draw.io files (with their PNG exports in `docs/diagrams/`), SQL scripts, application screenshots, tests, and GitHub commit history.
 - [ ] Add actual team contribution statements and any instructor-required cover/signature pages outside the application code.
 - [ ] Keep `.env.local`, plaintext passwords, private database credentials, and real user data out of screenshots and submitted files.

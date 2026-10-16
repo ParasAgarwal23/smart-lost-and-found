@@ -1,6 +1,6 @@
 # Initial PostgreSQL schema
 
-Source of truth: the two revised Draw.io files in `docs/` and the college requirements PDF. The original diagrams are historical only. The nine non-primary-key foreign keys in LOST_REPORT, FOUND_REPORT, CLAIM, and HANDOVER are NOT NULL as explicitly approved by the user. All primary-key components are implicitly NOT NULL; Password_Hash is explicitly NOT NULL. Other attributes remain nullable.
+Source of truth: the ER diagram (`docs/lost_found_ER_diagram.drawio`), the relational schema (`docs/lost_found_relational_schema.drawio`) and the college requirements PDF. PNG exports of both are in `docs/diagrams/`. The nine non-primary-key foreign keys in LOST_REPORT, FOUND_REPORT, CLAIM, and HANDOVER are NOT NULL as explicitly approved by the user. All primary-key components are implicitly NOT NULL; Password_Hash is explicitly NOT NULL. Other attributes remain nullable.
 
 The scripts create the ten approved relations in PostgreSQL's standard `public` schema. Table and column identifiers are consistently quoted to preserve their exact approved spelling, including `"USER"`.
 

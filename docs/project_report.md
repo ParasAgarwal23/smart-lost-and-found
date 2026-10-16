@@ -1,6 +1,6 @@
 # Smart Lost and Found Management System — DBMS Level 3 project report
 
-This report follows Section 14 of the [college brief](DBMS%20Level%203%20Project%20Requirements.pdf). The [approved ER diagram](lost_found_ER_diagram_revised.drawio) and [approved relational schema](lost_found_relational_schema_revised.drawio) are the design artifacts; the older Draw.io files are retained as history. Open the revised files in diagrams.net for the presentation.
+This report follows Section 14 of the [college brief](DBMS%20Level%203%20Project%20Requirements.pdf). The design artifacts are the editable [ER diagram](lost_found_ER_diagram.drawio) and [relational schema](lost_found_relational_schema.drawio) (open them in diagrams.net/draw.io); the PNG images below are exported from those files. Earlier drafts are not kept in the repository; they remain available in the Git history.
 
 **Submission details to complete personally:** the brief calls for a two-member team approved by the instructor. Add the actual student names and IDs, each member's database/application contributions, guide/instructor identification, college/course cover-page details, and submission date. The repository does not establish those facts.
 
@@ -29,6 +29,18 @@ In scope: Sign In/Sign Out, public search, authenticated report creation, owned 
 PostgreSQL 18 provides relational primary/foreign keys, transactions, row locks, SQL views and functions, triggers, and indexes in one database. pgvector 0.8.6 stores and compares the 384-dimensional report embeddings in that same relational design. This satisfies the brief's SQL-plus-vector requirement without a second database. Direct parameterized SQL through `pg` keeps the database operations visible for a DBMS demonstration.
 
 The approved ER and relational diagrams define ten tables. `USER` has the role field; `CATEGORY` and `LOCATION` are lookup tables; the two report tables carry item details and embeddings; `FOUND_PHOTOS` and `MATCHES` are existing design relations; `CLAIM` links a claimant to a found report; `CLAIM_EVIDENCE` is a weak entity numbered within a claim; and `HANDOVER` references a claim. Primary/foreign keys, required report/claim links, and unique `HANDOVER.Claim_ID` appear in [schema.sql](../db/schema.sql). The additional application rule of at most one handover across all claims for a found report is enforced in a transaction by locking that `FOUND_REPORT` row before checking/inserting.
+
+### ER diagram
+
+![ER diagram](diagrams/er_diagram.png)
+
+Eight entities (seven strong, one weak) and eleven relationships in Chen notation, which map to the ten tables: blue rectangles are entities, green diamonds relationships, yellow ellipses attributes. `CLAIM_EVIDENCE` is a weak entity (double border) identified through `HAS_EVIDENCE` (double diamond, total participation shown by the double line); `Photos` is a multivalued attribute (double ellipse); `MATCHES` is the M:N relationship between lost and found reports and carries its own attributes. Cardinalities appear on each relationship line.
+
+### Relational schema
+
+![Relational schema](diagrams/relational_schema.png)
+
+Each box is a table; arrows run from a foreign-key column to the primary key it references, coloured by the table that owns the foreign key. Bold markers show PK, FK, UNIQUE and CHECK; the note lists the six named integrity constraints. The "Step" labels follow the ER-to-relational mapping: strong entities, weak entity, 1:1, 1:N, M:N and the multivalued attribute.
 
 ### Data dictionary
 
@@ -117,7 +129,7 @@ The repository includes genuine screenshots captured on 2026-10-16 from the rede
 - [My Claims](screenshots/my-claims.png): claim progress, evidence count, receipt state and withdrawal.
 - [Campus Summary](screenshots/campus-summary.png): ADMIN-only counts, return share, category/location insights and recent activity.
 
-These images show demonstration data, not an endorsement of report ownership or live production metrics. The approved diagrams should be exported or opened from their revised Draw.io sources during presentation.
+These images show demonstration data, not an endorsement of report ownership or live production metrics. For the presentation, open the two Draw.io sources linked in section 2 or use their PNG exports in `docs/diagrams/`.
 
 **Usability review (2026-10-16).** A first-time-user walkthrough of every page found too much on screen at once: competing calls to action on the homepage, database terms in the interface (table names, "embedding", "cosine"), sidebars repeating the page's purpose, and claim cards with six ID fields and three equally weighted buttons. The interface was simplified without changing any rule or table: one primary action per page or card, task-based navigation with a "Report an item" menu, plain-language copy, progressive disclosure for rarely used search filters and for claiming without a pre-selected item, focused evidence/handover pages with a clear warning before the irreversible confirmation, and sign-in that explains why it is needed and returns the user to their task. Keyboard access to the new menu (Tab, Enter, Escape) and layouts at 1024/1280/1440px and at 400% browser zoom were checked in a real browser.
 
