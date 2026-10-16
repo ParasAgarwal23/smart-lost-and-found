@@ -227,10 +227,10 @@ npm start
 ## Project references and team
 
 - [College requirements](docs/DBMS%20Level%203%20Project%20Requirements.pdf)
-- [Approved ER diagram](docs/lost_found_ER_diagram_revised.drawio)
-- [Approved relational schema](docs/lost_found_relational_schema_revised.drawio)
+- [ER diagram](docs/lost_found_ER_diagram.drawio) (editable Draw.io; [PNG](docs/diagrams/er_diagram.png))
+- [Relational schema](docs/lost_found_relational_schema.drawio) (editable Draw.io, including PK/FK/UNIQUE/CHECK markers; [PNG](docs/diagrams/relational_schema.png))
 - [Project report](docs/project_report.md)
 - [Demonstration checklist](docs/demo_checklist.md)
 - [Viva study guide](docs/viva_guide.md)
 
-The original Draw.io diagrams are retained for historical reference. **Team details: [Add team member names, student IDs, and guide details here.]** No verified team roster is recorded in the repository.
+Earlier diagram drafts were removed from the working tree to avoid confusion; they remain in the Git history. **Team details: [Add team member names, student IDs, and guide details here.]** No verified team roster is recorded in the repository.
