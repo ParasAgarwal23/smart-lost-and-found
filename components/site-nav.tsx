@@ -80,7 +80,8 @@ function ReportMenu() {
 // re-reads the user from PostgreSQL before authorizing anything.
 export default function SiteNav({ user }: { user: NavUser }) {
   const pathname = usePathname();
-  // The mobile menu remembers the path it was opened on, so navigating closes it.
+  // The compact menu (windows narrower than 1280px, including zoomed desktop
+  // browsers) remembers the path it was opened on, so navigating closes it.
   const [openedOn, setOpenedOn] = useState<string | null>(null);
   const open = openedOn !== null && openedOn === pathname;
   const items = navItems(user);
@@ -117,13 +118,13 @@ export default function SiteNav({ user }: { user: NavUser }) {
         )}
       </div>
 
-      <button type="button" className="btn btn-secondary btn-sm ml-auto xl:hidden" aria-expanded={open} aria-controls="mobile-menu"
+      <button type="button" className="btn btn-secondary btn-sm ml-auto xl:hidden" aria-expanded={open} aria-controls="compact-menu"
         onClick={() => setOpenedOn(open ? null : pathname)}>
         <Icon name={open ? "close" : "menu"} size={18} />
         <span className="max-[359px]:sr-only">Menu</span>
       </button>
-      <div id="mobile-menu" hidden={!open} className="absolute inset-x-0 top-full border-b border-line bg-surface shadow-lg xl:hidden">
-        <nav aria-label="Mobile" className="container-page grid gap-1 py-3">
+      <div id="compact-menu" hidden={!open} className="absolute inset-x-0 top-full border-b border-line bg-surface shadow-lg xl:hidden">
+        <nav aria-label="Menu" className="container-page grid gap-1 py-3">
           {reportLinks.map((link) => (
             <Link key={link.href} href={link.href} className="nav-link min-h-11 text-base">
               <Icon name={link.icon} size={18} />{link.hint}

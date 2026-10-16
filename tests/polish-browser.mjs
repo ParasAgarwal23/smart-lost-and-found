@@ -157,8 +157,9 @@ export async function runBrowserChecks({ users, id, pool }) {
       ORDER BY date DESC NULLS LAST, id DESC, type ASC LIMIT $1`, [10])).rows;
     assert.deepEqual(await evaluate(`Array.from(document.querySelector('table[aria-label="Recent Campus Activity"]').tBodies[0].rows).map(row => ({ id: Number(row.dataset.reportId), type: row.dataset.reportType, item: row.cells[0].textContent, date: row.cells[4].querySelector('time')?.dateTime ?? null }))`), expectedActivity.map(row => ({...row, item: row.item ?? 'Unnamed item'})));
     console.log('PASS browser: category/location tables and recent activity agree with independent PostgreSQL queries');
-    for (const width of [320, 390, 768, 1440]) {
-      await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 600 });
+    // Desktop widths, plus 320px = a 1280px window at 400% zoom (WCAG 1.4.10 reflow).
+    for (const width of [320, 1024, 1280, 1440]) {
+      await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
       assert.ok(await evaluate(`document.documentElement.scrollWidth <= ${width}`), `Campus Summary overflow at ${width}px`);
     }
     console.log('PASS browser: ADMIN-only navigation and live totals, USER denial, and responsive Campus Summary');
@@ -251,14 +252,15 @@ export async function runBrowserChecks({ users, id, pool }) {
     assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."CLAIM" WHERE "Claim_ID" = $1', [withdrawClaimId])).rows[0].count, 0);
     console.log('PASS browser: withdrawal needs confirmation, deletes the claim, removes its card and announces the result');
 
-    for (const width of [320, 390, 768, 1440]) {
-      await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 600 });
+    // Desktop widths, plus 320px = a 1280px window at 400% zoom (WCAG 1.4.10 reflow).
+    for (const width of [320, 1024, 1280, 1440]) {
+      await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
       for (const route of ['/', '/login', '/lost-report', '/found-report', '/search', `/potential-matches?lostId=${saved.lost}`, '/claim', '/claim/evidence', '/claim/handover', '/my-reports', `/my-reports/edit?type=lost&id=${saved.lost}`, '/missing-page']) {
         await visit(route);
         assert.ok(await evaluate(`document.documentElement.scrollWidth <= ${width}`), `Horizontal overflow: ${route} at ${width}px`);
       }
     }
-    console.log('PASS browser: all twelve routes (including My Reports, Edit and 404) at 320/390/768/1440px including real 100-character unbroken item names');
+    console.log('PASS browser: all twelve routes (including My Reports, Edit and 404) at 1024/1280/1440px and 400% zoom (320px) including real 100-character unbroken item names');
   } finally {
     if (targetId) await call('Target.closeTarget', { targetId }, null);
     ws.close();

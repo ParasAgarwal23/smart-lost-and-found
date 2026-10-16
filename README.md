@@ -29,8 +29,6 @@ Captured from the running production build with fictional demo data (October 202
 | ![Campus Summary](docs/screenshots/campus-summary.png) ADMIN Campus Summary | ![Report a lost item](docs/screenshots/report-lost-item.png) Report form |
 | ![My Reports](docs/screenshots/my-reports.png) My Reports | ![Sign In](docs/screenshots/sign-in.png) Sign In |
 
-Mobile (390px): [home](docs/screenshots/home-mobile.png).
-
 ## Design system
 
 `app/globals.css` defines the tokens (exposed to Tailwind through `@theme`) and a small set of component classes; `components/` holds the shared React pieces (`ui.tsx`, `form.tsx`, `icons.tsx`, `site-header.tsx`, `report-form.tsx`).
