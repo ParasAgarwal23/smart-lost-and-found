@@ -94,25 +94,21 @@ FROM public."FOUND_REPORT" GROUP BY "Category_ID"
 HAVING COUNT(*) > 0 ORDER BY report_count DESC;
 ```
 
-The brief also lists `ALTER` and `DROP`. The checked-in setup deliberately does not apply these to the approved schema (`UPDATE` and `DELETE` are now part of the application workflows above). For a safe SQL-language demonstration, use an isolated **temporary copy**, never the permanent tables; this example is illustrative and has not been run as a project test:
+### DDL: CREATE, ALTER and DROP (brief §5)
 
-```sql
-BEGIN;
-CREATE TEMP TABLE dbms_demo_counts AS
-SELECT "Category_ID", COUNT(*)::int AS report_count
-FROM public."FOUND_REPORT" GROUP BY "Category_ID";
-ALTER TABLE dbms_demo_counts ADD COLUMN note text;
-INSERT INTO dbms_demo_counts ("Category_ID", report_count, note)
-VALUES (-1, 0, 'temporary demo row');
-UPDATE dbms_demo_counts SET note = 'reviewed' WHERE "Category_ID" = -1;
-SELECT "Category_ID", SUM(report_count) AS total
-FROM dbms_demo_counts GROUP BY "Category_ID" HAVING SUM(report_count) >= 0;
-DELETE FROM dbms_demo_counts WHERE "Category_ID" = -1;
-DROP TABLE dbms_demo_counts;
-ROLLBACK;
+The brief asks the project to "demonstrate suitable use of CREATE, ALTER, DROP". How each is met:
+
+- **CREATE** (executed during setup): `db/schema.sql` creates the ten tables; `views.sql`, `functions.sql`, `triggers.sql`, `indexes.sql` and `vector_search.sql` create the views, functions, triggers and B-tree/HNSW indexes.
+- **ALTER** (executed): `db/constraints.sql` runs `ALTER TABLE … ADD CONSTRAINT` for the six named integrity constraints; it was applied to the local database on 2026-10-16 and `verify.sql` confirms them.
+- **DROP** (executed demonstration): `db/drop_demo.sql` uses disposable `TEMPORARY` tables only (qualified with `pg_temp`, never a project table, no `CASCADE`). It creates a table, adds a column and a CHECK constraint with `ALTER TABLE … ADD`, removes the column with `ALTER TABLE … DROP COLUMN`, then creates a child table with a foreign key and shows that `DROP TABLE` on the parent is refused (SQLSTATE `2BP01`, dependent objects exist). It resolves the dependency with `ALTER TABLE … DROP CONSTRAINT`, drops both tables, and checks the results in `pg_attribute`/`to_regclass`.
+
+Run it live with:
+
+```powershell
+psql -X -h localhost -U postgres -d smart_lost_found -f db/drop_demo.sql
 ```
 
-This temporary-table example does not modify the approved ER model or application data. Run it only in a disposable/local demonstration session if the professor asks to see these SQL verbs executed.
+**Verification (executed 2026-10-16 on the local database):** the script printed `t` for "column dropped", "parent drop blocked by FK (2BP01)", "both tables dropped" and "project tables unchanged", and ended with `PASS`. An MD5 fingerprint of every row in all ten project tables was identical before and after, and `verify.sql` still passed. (The two `NOTICE … pg_temp does not exist` lines at the start are expected: they come from the repeatability clean-up on a fresh session.)
 
 ## 4. Application architecture and access control
 
