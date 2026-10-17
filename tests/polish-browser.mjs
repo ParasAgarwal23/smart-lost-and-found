@@ -87,6 +87,18 @@ export async function runBrowserChecks({ users, id, pool }) {
     await session(null);
     await visit('/');
     assert.ok(await evaluate(`!!document.querySelector('a[href="/login"]') && !document.body.textContent.includes('Sign Out')`));
+    const recentLinks = await evaluate(`[...document.querySelectorAll('section[aria-labelledby="recent-heading"] li > a')].map(a => a.getAttribute('href'))`);
+    assert.ok(recentLinks.length > 0 && recentLinks.every((href) => href.startsWith('/search?type=Found')), 'Every recently found item must open the found-item search');
+    for (const width of [1024, 1280, 1440]) {
+      await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+      // The subtitle's last word must share a line with the word before it.
+      assert.ok(await evaluate(`(() => {
+        const text = [...document.querySelectorAll('main p')].find(p => p.textContent.startsWith('Search everything')).firstChild;
+        const at = (word) => { const range = document.createRange(); const start = text.data.lastIndexOf(word); range.setStart(text, start); range.setEnd(text, start + word.length); return range.getBoundingClientRect().top; };
+        return Math.abs(at('found.') - at(' or ')) < 2;
+      })()`), `Home subtitle leaves its last word alone at ${width}px`);
+    }
+    await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     await visit('/login');
     await fill('email', `absent-${-id}@example.invalid`);
     await fill('password', 'invalid-test-value');
@@ -199,10 +211,34 @@ export async function runBrowserChecks({ users, id, pool }) {
     await session(users[0]);
     await visit(`/search?type=Found&text=${name}`);
     assert.ok(await evaluate(`!!document.querySelector('a[href="/claim?foundId=${saved.found}#submit-claim"]')`));
+    // Filters apply on change: switching Lost/Found reloads results without pressing Search.
+    // Re-dispatching while the request is in flight also exercises the duplicate-request guard.
+    await until(`location.search.includes('type=Lost') || (document.querySelector('input[name=type][value=Lost]').click(), false)`, 'Changing the Lost/Found switch must apply the filter');
+    await until(`document.readyState === 'complete' && !!document.querySelector('input[name=type][value=Lost]')?.checked && !document.querySelector('a[href="/claim?foundId=${saved.found}#submit-claim"]')`, 'Filtered results must replace the previous results');
+    assert.ok(await evaluate(`new URLSearchParams(location.search).get('text') === ${JSON.stringify(name)}`), 'Keywords must be kept when a filter changes');
+
+    // Long descriptions are clamped with a Show more / Show less toggle; short ones have none.
+    const longFound = id - 7;
+    const longText = `Expandable ${-id}. ` + 'A detailed description that keeps going so it cannot fit in three lines. '.repeat(12) + 'Final detail: initials under the lid.';
+    await pool.query('INSERT INTO public."FOUND_REPORT" ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name", "Description") VALUES ($1, $2, $3, $3, $4, $5)', [longFound, users[1], id, 'Browser long description item', longText]);
+    await visit(`/search?type=Found&text=Expandable%20${-id}`);
+    await until(`[...document.querySelectorAll('main article button')].some(b => b.textContent === 'Show more')`, 'A clamped description must offer Show more');
+    await evaluate(`[...document.querySelectorAll('main article button')].find(b => b.textContent === 'Show more').click()`);
+    await until(`(() => { const b = [...document.querySelectorAll('main article button')].find(b => b.textContent === 'Show less'); const p = b?.parentElement.querySelector('p'); return b?.getAttribute('aria-expanded') === 'true' && p.textContent.endsWith('initials under the lid.') && p.scrollHeight <= p.clientHeight + 1; })()`, 'Show more must reveal the whole description');
+    await visit(`/search?type=Found&text=${name}`);
+    assert.ok(await evaluate(`![...document.querySelectorAll('main article button')].some(b => b.textContent === 'Show more')`), 'Short descriptions must not show a toggle');
+
     await visit(`/potential-matches?lostId=${saved.lost}`);
-    const ranking = (await pool.query('SELECT "Found_ID" FROM public.find_potential_matches($1,10)', [saved.lost])).rows.map((row) => row.Found_ID);
+    const ranking = (await pool.query('SELECT "Found_ID", "Cosine_Similarity" FROM public.find_potential_matches($1,10)', [saved.lost])).rows;
     const displayed = await evaluate(`[...document.querySelectorAll('article[data-found-id]')].map(article => Number(article.dataset.foundId))`);
-    assert.deepEqual(displayed, ranking);
+    assert.deepEqual(displayed, ranking.map((row) => row.Found_ID));
+    const best = ranking.reduce((top, row) => (!top || row.Cosine_Similarity > top.Cosine_Similarity ? row : top), undefined);
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('article[data-found-id]')].filter(article => article.textContent.includes('Best match')).map(article => Number(article.dataset.foundId))`), best ? [best.Found_ID] : [], 'Exactly the highest-similarity result is labelled Best match');
+    assert.ok(await evaluate(`![...document.querySelectorAll('main button')].some(button => button.textContent === 'Show matches')`), 'Choosing a report replaces the Show matches button');
+    await visit('/potential-matches');
+    await until(`location.search === '?lostId=${saved.lost}' || (() => { const select = document.getElementById('lostId'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, '${saved.lost}'); select.dispatchEvent(new Event('change', { bubbles: true })); return false; })()`, 'Choosing a lost report must load its matches');
+    await until(`document.readyState === 'complete' && document.querySelectorAll('article[data-found-id]').length === ${ranking.length}`, 'Matches must load for the chosen report');
+    console.log('PASS browser: filters and lost-report choice apply on change, full descriptions expand, and Best match marks the top score');
     await visit(`/claim?foundId=${saved.found}`);
     assert.equal(await valueOf('foundId'), String(saved.found));
     await submit('Claim submitted successfully.', 'foundId');
@@ -210,6 +246,8 @@ export async function runBrowserChecks({ users, id, pool }) {
     const claimId = (await pool.query('SELECT "Claim_ID" FROM public."CLAIM" WHERE "User_ID"=$1 AND "Found_ID"=$2', [users[0], saved.found])).rows[0].Claim_ID;
     assert.ok(await evaluate(`!!document.querySelector('#claim-${claimId}')`));
     await visit(`/claim/evidence?claimId=${claimId}`);
+    assert.ok(await evaluate(`document.getElementById('claimId')?.type === 'hidden' && document.querySelector('[aria-labelledby="claimId-label"]').textContent.includes('claimed')`), 'A claim chosen on the previous page is shown, not asked for again');
+    assert.ok(await evaluate(`!/[(]claim -?[0-9]+[)]/.test(document.querySelector('main').textContent)`), 'No internal claim IDs in labels');
     await fill('description', 'Temporary private ownership proof.');
     await session(null);
     await submit('Please sign in');
@@ -233,6 +271,7 @@ export async function runBrowserChecks({ users, id, pool }) {
     await fill('signature', 'Test acknowledgement');
     await submit('Item receipt recorded successfully.');
     assert.equal(await valueOf('signature'), undefined, 'No unusable receipt fields after last eligible handover');
+    assert.ok(await evaluate(`(() => { const text = document.querySelector('main').textContent; return !text.includes('You have no claims waiting') && !text.includes('Before you confirm') && [...document.querySelectorAll('main a')].some(a => a.textContent === 'Back to My Claims' && a.classList.contains('btn')); })()`), 'Handover success must show only the success message and the way back');
     await visit('/claim');
     assert.ok(await evaluate(`document.querySelector('#claim-${claimId}').textContent.includes('Receipt recorded')`));
     console.log('PASS browser: contextual claims, preserved evidence/handover drafts, successful clearing, live history and receipt refresh, unchanged vector ranking');

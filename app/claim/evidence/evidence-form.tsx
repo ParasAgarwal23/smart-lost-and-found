@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { addClaimEvidence, type EvidenceState } from "@/app/actions/claim-evidence";
+import ClaimPicker, { type PickableClaim } from "@/app/claim/claim-picker";
 import { describedBy, Field, FormFeedback, SubmitButton } from "@/components/form";
 import { Icon } from "@/components/icons";
 
 const initialState: EvidenceState = { error: null, success: null };
 
 export default function EvidenceForm({ claims, initialClaimId }: {
-  claims: { Claim_ID: number; Item_Name: string | null; Has_Handover?: boolean }[];
+  claims: PickableClaim[];
   initialClaimId?: number;
 }) {
   const [claimId, setClaimId] = useState(String(initialClaimId ?? ""));
@@ -24,17 +25,9 @@ export default function EvidenceForm({ claims, initialClaimId }: {
   return (
     // Expected action errors also trigger React's native reset; clear only on success above.
     <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className="mt-6 grid gap-5">
-      <Field id="claimId" label="Which claim is this for?" error={errors.claimId ? "Choose one of your claims." : undefined}>
-        <select key={initialClaimId ?? "generic"} id="claimId" name="claimId" required value={claimId} onChange={(event) => setClaimId(event.target.value)}
-          aria-describedby={describedBy("claimId", { error: !!errors.claimId }, "evidence-feedback")} aria-invalid={!!errors.claimId} className="input">
-          <option value="" disabled>Select a claim</option>
-          {claims.map((claim) => (
-            <option key={claim.Claim_ID} value={claim.Claim_ID}>
-              {claim.Item_Name ?? "Unnamed item"} (claim {claim.Claim_ID})
-            </option>
-          ))}
-        </select>
-      </Field>
+      <ClaimPicker claims={claims} initialClaimId={initialClaimId} value={claimId} onChange={setClaimId}
+        label="Which claim is this for?" switchHref="/claim/evidence" error={errors.claimId ? "Choose one of your claims." : undefined}
+        describedBy={describedBy("claimId", { error: !!errors.claimId }, "evidence-feedback")} />
       <Field id="description" label="What proves it's yours?" error={errors.description ? "Enter 1 to 255 characters." : undefined}
         hint="One detail per entry, e.g. “Receipt no. 4521” or “Initials scratched under the lid”. You can add more later."
         counter={<span className="counter" aria-hidden="true">{description.length}/255</span>}>

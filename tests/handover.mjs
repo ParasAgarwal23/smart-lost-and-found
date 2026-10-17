@@ -152,6 +152,9 @@ function claimCard(html, claimId) {
 }
 
 function selectedClaim(html) {
+  // A claim named by the previous page is shown as a fixed summary with a hidden input.
+  const fixed = html.match(/<input[^>]*type="hidden"[^>]*id="claimId"[^>]*value="(-?\d+)"/);
+  if (fixed) return Number(fixed[1]);
   const select = html.match(/<select[^>]*id="claimId"[\s\S]*?<\/select>/);
   if (!select) return undefined;
   const option = select[0].match(/<option\b(?=[^>]*value="(-?\d+)")(?=[^>]*selected)[^>]*>/);
@@ -301,6 +304,14 @@ async function workflowBeforeHandover() {
     assert.ok(rejected.includes('This found report is unavailable to claim.'));
   }
   assert.ok((await renderPage('app/claim/page.tsx', users[2], { foundId: String(reports[3]) })).includes('This found report is unavailable to claim.'));
+  // An unavailable item gets one specific explanation and one next step, with no picker or second message.
+  const alreadyClaimed = await renderPage('app/claim/page.tsx', users[0], { foundId: String(reports[0]) });
+  assert.ok(alreadyClaimed.includes('You have already claimed this item.') && alreadyClaimed.includes(`href="#claim-${claims[0]}"`));
+  assert.ok(!alreadyClaimed.includes('id="foundId"') && !alreadyClaimed.includes('There are no found items you can claim right now'));
+  const ownFound = await renderPage('app/claim/page.tsx', users[2], { foundId: String(reports[3]) });
+  assert.ok(ownFound.includes('You reported this item yourself.') && ownFound.includes('href="/my-reports"'));
+  assert.ok((await renderPage('app/claim/page.tsx', users[0], { foundId: 'invalid' })).includes('href="/search?type=Found"'));
+  assert.ok(!/Claim #-?\d/.test(await renderPage('app/claim/page.tsx', users[0])), 'Claim cards must not show internal claim numbers');
   const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
   const context = await getFoundReportContext(reports, users[0]);
   assert.equal(context.find((row) => row.Found_ID === reports[0]).Own_Claim_ID, claims[0]);
@@ -379,6 +390,7 @@ async function workflowBeforeHandover() {
   const card = claimCard(refreshed, createdClaimId);
   assert.ok(card.includes(`/claim/evidence?claimId=${createdClaimId}#evidence-${createdClaimId}`));
   assert.ok(card.includes('Add evidence'));
+  assert.ok(/data-done="true">Claim submitted/.test(card) && /data-done="false">Add proof/.test(card) && /data-done="false">Confirm receipt/.test(card), 'A new claim has only its first step done');
   assert.ok(card.includes(`/claim/handover?claimId=${createdClaimId}`));
   console.log('PASS Batch 2 D/E/P/T: committed ID returned, refreshed history, real overlapping duplicate prevention, no mutation redirect');
 
@@ -390,12 +402,14 @@ async function workflowBeforeHandover() {
   assert.ok(!selector.match(/^<select[^>]*\bdisabled/));
   assert.deepEqual([...selector.matchAll(/<option[^>]*value="(-?\d+)"/g)].map((match) => Number(match[1])),
     [createdClaimId, claims[0], claims[2], claims[4]]);
+  assert.ok(!/\(claim -?\d+\)/.test(selector) && selector.includes('— claimed '), 'Claim options are labelled by item and claim date, not internal IDs');
   for (const page of [evidencePage, handoverPage]) {
     const formName = page === evidencePage ? 'EvidenceForm' : 'HandoverForm';
     let selectedKey;
     const selected = await renderPage(page, users[0], { claimId: String(createdClaimId) }, (tree) => { selectedKey = formKey(tree, formName); });
     assert.equal(selectedClaim(selected), createdClaimId);
     assert.ok(selected.includes('Back to My Claims'));
+    assert.ok(!selected.includes('<select') && selected.includes('Choose a different claim'), 'A known claim is shown, not asked for again');
     assert.equal(selectedKey, JSON.stringify(String(createdClaimId)));
     let nextKey;
     await renderPage(page, users[0], { claimId: String(claims[4]) }, (tree) => { nextKey = formKey(tree, formName); });
@@ -430,6 +444,7 @@ async function workflowBeforeHandover() {
   const afterEvidence = await renderPage('app/claim/page.tsx', users[0]);
   const evidenceCard = claimCard(afterEvidence, createdClaimId);
   assert.ok(evidenceCard.includes('data-evidence-count="2"'));
+  assert.ok(/data-done="true">Proof added \(2\)/.test(evidenceCard) && /data-done="false">Confirm receipt/.test(evidenceCard), 'Progress shows only the steps that really happened');
   assert.ok(evidenceCard.includes('View or add evidence'));
   assert.ok(evidenceCard.includes('Confirm item received'), 'With evidence added, confirming receipt becomes the next step');
   assert.ok(!afterEvidence.includes('Private regression ownership detail'));
@@ -454,11 +469,13 @@ async function workflowAfterHandover(createdClaimId) {
   const own = await renderPage('app/claim/page.tsx', users[0]);
   const ownReceipt = claimCard(own, claims[0]);
   assert.ok(ownReceipt.includes('Receipt recorded'));
+  assert.ok(/data-done="true">Item received/.test(ownReceipt));
   assert.ok(!ownReceipt.includes('/claim/handover?'));
   assert.ok(!own.includes('Test receipt'));
   const other = await renderPage('app/claim/page.tsx', users[1]);
   const otherReceipt = claimCard(other, claims[1]);
   assert.ok(otherReceipt.includes('This item has already been handed over.'));
+  assert.ok(/data-done="false">Returned to someone else/.test(otherReceipt) && !otherReceipt.includes('Item received'), 'A competing receipt is never shown as this claimant receiving the item');
   assert.ok(!otherReceipt.includes('/claim/handover?'));
   for (const [user, claimId] of [[users[0], claims[0]], [users[1], claims[1]]]) {
     const ineligible = await renderPage('app/claim/handover/page.tsx', user, { claimId: String(claimId) }, (tree) => {

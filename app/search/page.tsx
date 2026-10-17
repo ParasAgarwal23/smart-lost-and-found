@@ -5,6 +5,8 @@ import { getFoundReportContext, type FoundReportContext } from "@/lib/found-repo
 import { getReportOptions } from "@/lib/reference-data";
 import { searchReports } from "@/lib/search";
 import ClaimLink from "@/app/claim/claim-link";
+import AutoSubmit from "@/components/auto-submit";
+import ExpandableText from "@/components/expandable-text";
 import { Icon } from "@/components/icons";
 import { EmptyState, formatDate, Notice, placeLabel, ReportTypeBadge } from "@/components/ui";
 
@@ -60,6 +62,7 @@ export default async function SearchPage({ searchParams }: {
       <p className="page-description">Everything reported on campus. Anyone can search; claiming an item needs an account.</p>
 
       <form action="/search" method="get" role="search" aria-label="Search reports" className="card mt-6 grid gap-4 p-4 sm:p-5">
+        <AutoSubmit resultsId="results" />
         <div className="flex flex-col gap-2 sm:flex-row">
           <div className="relative flex-1">
             <label htmlFor="text" className="sr-only">Keywords</label>
@@ -109,7 +112,7 @@ export default async function SearchPage({ searchParams }: {
         </details>
       </form>
 
-      <section aria-labelledby="results-heading" className="mt-8">
+      <section id="results" aria-labelledby="results-heading" className="results-region mt-8">
         {(options.error || result.error) && <Notice tone="error" className="mb-5">{options.error ?? result.error}</Notice>}
         {!result.error && <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -149,8 +152,8 @@ export default async function SearchPage({ searchParams }: {
                       <span>{formatDate(report.Report_Date)} · {placeLabel(report.Location_Name, report.Building)}</span>
                     </p>
                     <h3 className="text-lg font-bold">{report.Item_Name ?? "Unnamed item"}</h3>
-                    <p className="line-clamp-3 whitespace-pre-wrap text-sm text-ink-2">{report.Description ?? "No description supplied."}</p>
-                    <p className="text-xs text-ink-3"><span className="sr-only">Category: </span>{report.Category_Name ?? "Unnamed category"}</p>
+                    <ExpandableText text={report.Description ?? "No description supplied."} className="text-sm text-ink-2" />
+                    <p className="text-meta text-ink-3"><span className="sr-only">Category: </span>{report.Category_Name ?? "Unnamed category"}</p>
                     <div className="card-actions">
                       {report.Report_Type === "Found"
                         ? <ClaimLink foundId={report.Report_ID} context={contexts.find((context) => context.Found_ID === report.Report_ID)} signedIn={!!user} />

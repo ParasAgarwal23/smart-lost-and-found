@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { loginPath } from "@/lib/next-path";
+import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { Icon } from "@/components/icons";
 import { DateText, EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
-import ClaimForm, { type ClaimableReport } from "./claim-form";
+import ClaimForm, { type BlockedClaim, type ClaimableReport } from "./claim-form";
 import WithdrawClaim from "./withdraw-claim";
 import WithdrawNotice from "./withdraw-notice";
 
@@ -91,8 +92,20 @@ export default async function ClaimPage({ searchParams }: {
   const requestedId = typeof foundId === "string" && /^-?\d+$/.test(foundId) ? Number(foundId) : NaN;
   const initialFoundId = Number.isInteger(requestedId) && reports.some((report) => report.Found_ID === requestedId)
     ? requestedId : undefined;
-  const selectionError = !error && foundId !== undefined && initialFoundId === undefined
-    ? "This found report is unavailable to claim. It may be your own report, already claimed by you, or already handed over." : null;
+  // One explanation (and one next step) when the requested item can't be claimed.
+  let blocked: BlockedClaim | null = null;
+  if (!error && foundId !== undefined && initialFoundId === undefined) {
+    let context: FoundReportContext | undefined;
+    if (Number.isInteger(requestedId) && requestedId >= -2147483648 && requestedId <= 2147483647) {
+      try { [context] = await getFoundReportContext([requestedId], user.User_ID); } catch { /* Fall back to the general message. */ }
+    }
+    const search = { href: "/search?type=Found", label: "Search found items" };
+    blocked = !context ? { message: "This found report is unavailable to claim. It may have been removed, or the link is incorrect.", action: search }
+      : context.Is_Own_Report ? { message: "This found report is unavailable to claim. You reported this item yourself.", action: { href: "/my-reports", label: "View My Reports" } }
+      : context.Own_Claim_ID !== null ? { message: "This found report is unavailable to claim. You have already claimed this item.", action: { href: `#claim-${context.Own_Claim_ID}`, label: "View My Claim" } }
+      : context.Has_Handover ? { message: "This found report is unavailable to claim. It has already been returned to its owner.", action: search }
+      : { message: "This found report is unavailable to claim right now.", action: search };
+  }
   const requested = reports.find((report) => report.Found_ID === initialFoundId);
   const arrivedToClaim = foundId !== undefined;
 
@@ -102,17 +115,17 @@ export default async function ClaimPage({ searchParams }: {
       <h2 id="submit-title" className="section-title">{requested ? `Claim “${requested.Item_Name ?? "this item"}”` : "Claim a found item"}</h2>
       {requested && <p className="mt-1 text-sm text-ink-3">Found {formatDate(requested.Date_Found)} · {placeLabel(requested.Location_Name, requested.Building)}</p>}
       <p className="mt-2 text-sm text-ink-2">After you claim, add proof that it&apos;s yours, such as a receipt or a detail only the owner would know.</p>
-      {error ? <Notice tone="error" className="mt-4">{error}</Notice> : reports.length === 0 && (
+      {error ? <Notice tone="error" className="mt-4">{error}</Notice> : reports.length === 0 && !blocked && (
         <p className="mt-4 text-sm text-ink-2">There are no found items you can claim right now. <Link href="/search?type=Found" className="link">Search found items</Link></p>
       )}
-      <ClaimForm key={JSON.stringify(foundId) ?? "generic"} reports={reports} initialFoundId={initialFoundId} selectionError={selectionError} unavailable={error !== null} />
+      <ClaimForm key={JSON.stringify(foundId) ?? "generic"} reports={reports} initialFoundId={initialFoundId} blocked={blocked} unavailable={error !== null} />
     </section>
   );
 
   return (
     <main id="main-content" tabIndex={-1} className="container-page max-w-3xl py-8 sm:py-12">
       <h1 id="claims-title" className="page-title">My Claims</h1>
-      <p className="page-description">Items you&apos;ve asked to collect. Each claim shows its next step.</p>
+      <p className="page-description">Items you&apos;ve asked to collect. Claim the item first, then add proof that it&apos;s yours, and confirm once you have it back.</p>
 
       {arrivedToClaim && <div className="mt-6">{claimSection}</div>}
 
@@ -137,17 +150,22 @@ export default async function ClaimPage({ searchParams }: {
               return (
                 <li key={claim.Claim_ID}>
                   <article id={`claim-${claim.Claim_ID}`} className={`card report-card ${received ? "rail-done" : closedByOther ? "" : "rail-claim"}`}>
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                      <h3 className="text-lg font-bold">{claim.Item_Name ?? "Unnamed item"}</h3>
-                      <span className="text-xs text-ink-3">Claim #{claim.Claim_ID}</span>
-                    </div>
+                    <h3 className="text-lg font-bold">{claim.Item_Name ?? "Unnamed item"}</h3>
                     <p className="text-sm text-ink-3">
                       {claim.Category_Name ?? "Unnamed category"} · {placeLabel(claim.Location_Name, claim.Building)} · claimed {formatDate(claim.Claim_Date)}
                     </p>
-                    <ol className="steps" aria-label="Progress">
-                      <li className="step" data-done="true">Claimed</li>
-                      <li className="step" data-done={evidenceCount > 0}>Proof added <span className="sr-only">({evidenceCount})</span></li>
-                      <li className="step" data-done={received}>Received</li>
+                    {/* Proof is added after claiming (CLAIM_EVIDENCE rows belong to a CLAIM).
+                        Each step is marked done only when its row exists. */}
+                    <ol className="steps" aria-label="Claim progress">
+                      {[
+                        { done: true, label: "Claim submitted" },
+                        { done: evidenceCount > 0, label: evidenceCount > 0 ? `Proof added (${evidenceCount})` : received || closedByOther ? "No proof added" : "Add proof" },
+                        { done: received, label: received ? "Item received" : closedByOther ? "Returned to someone else" : "Confirm receipt" },
+                      ].map((step) => (
+                        <li key={step.label} className="step" data-done={step.done}>
+                          {step.label}<span className="sr-only">{step.done ? " (done)" : " (not done)"}</span>
+                        </li>
+                      ))}
                     </ol>
                     <div className="rounded-xl bg-sunken/60 p-3 text-sm">
                       {received ? (
