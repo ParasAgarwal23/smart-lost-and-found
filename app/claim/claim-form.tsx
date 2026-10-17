@@ -9,13 +9,15 @@ import { formatDate } from "@/components/ui";
 
 const initialState: ClaimState = { error: null, success: null };
 
+export type BlockedClaim = { message: string; action: { href: string; label: string } };
+
 export type ClaimableReport = { Found_ID: number; Item_Name: string | null; Location_Name: string | null; Date_Found: string | null };
 
-export default function ClaimForm({ reports, initialFoundId, selectionError = null, unavailable = false }: {
+export default function ClaimForm({ reports, initialFoundId, blocked = null, unavailable = false }: {
   reports: ClaimableReport[];
   unavailable?: boolean;
   initialFoundId?: number;
-  selectionError?: string | null;
+  blocked?: BlockedClaim | null;
 }) {
   const [foundId, setFoundId] = useState(String(initialFoundId ?? ""));
   const [state, action, pending] = useActionState(async (previous: ClaimState, data: FormData) => {
@@ -27,8 +29,21 @@ export default function ClaimForm({ reports, initialFoundId, selectionError = nu
   return (
     // Expected action errors also trigger React's native reset; clear only on success above.
     <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className="mt-4 grid gap-4">
-      {selectionError && !state.success && <p role="alert" className="notice notice-warning"><Icon name="alert" size={18} className="mt-0.5" />{selectionError}</p>}
-      {!unavailable && reports.length > 0 && (
+      {blocked && !state.success && (
+        <div role="alert" className="notice notice-warning">
+          <Icon name="alert" size={18} className="mt-0.5" />
+          <div className="min-w-0">
+            <p>{blocked.message}</p>
+            <div className="mt-2">
+              {/* A same-page anchor (the user's existing claim card) needs a plain link. */}
+              {blocked.action.href.startsWith("#")
+                ? <a href={blocked.action.href} className="btn btn-secondary btn-sm">{blocked.action.label}</a>
+                : <Link href={blocked.action.href} className="btn btn-secondary btn-sm">{blocked.action.label}</Link>}
+            </div>
+          </div>
+        </div>
+      )}
+      {!unavailable && !blocked && reports.length > 0 && (
         <Field id="foundId" label="Item you are claiming" hint="Only items you can claim are listed (not your own reports, items you already claimed, or items already returned).">
           <select id="foundId" name="foundId" required disabled={unavailable || reports.length === 0} value={foundId} onChange={(event) => setFoundId(event.target.value)} aria-describedby="foundId-hint claim-feedback" className="input">
             <option value="" disabled>Choose a found item</option>
@@ -49,7 +64,7 @@ export default function ClaimForm({ reports, initialFoundId, selectionError = nu
           <a href={state.claimId ? `#claim-${state.claimId}` : "#my-claims"} className="btn btn-secondary btn-sm">View My Claim</a>
         </nav>
       )}
-      {!unavailable && reports.length > 0 && (
+      {!unavailable && !blocked && reports.length > 0 && (
         <SubmitButton pending={pending} pendingLabel="Submitting…" className="btn btn-primary w-full">
           <Icon name="clipboard" size={17} />Claim this item
         </SubmitButton>

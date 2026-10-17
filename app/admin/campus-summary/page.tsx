@@ -22,7 +22,7 @@ function ReportBreakdown({ title, groups, dimension }: { title: string; groups: 
     <section className="card card-pad min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h3 className="section-title">{title}</h3>
-        <p className="flex gap-3 text-xs font-semibold text-ink-2" aria-hidden="true">
+        <p className="flex gap-3 text-meta font-semibold text-ink-2" aria-hidden="true">
           <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-lost" />Lost</span>
           <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-brand" />Found</span>
         </p>
@@ -42,7 +42,7 @@ function ReportBreakdown({ title, groups, dimension }: { title: string; groups: 
               <tr key={group.id} data-group-id={group.id}>
                 <th scope="row" className="text-left font-semibold">
                   {group.label ?? `Unnamed ${dimension.toLowerCase()}`}
-                  {group.building && <span className="block text-xs font-normal text-ink-3">{group.building}</span>}
+                  {group.building && <span className="block text-meta font-normal text-ink-3">{group.building}</span>}
                   <span aria-hidden="true" className="mt-2 flex h-2 overflow-hidden rounded-full bg-sunken">
                     <span className="bg-lost" style={{ width: `${lostWidth}%` }} />
                     <span className="bg-brand" style={{ width: `${foundWidth}%` }} />
@@ -209,7 +209,7 @@ export default async function CampusSummaryPage() {
                 <th scope="row" className="text-left font-semibold">{report.item ?? "Unnamed item"}</th>
                 <td><ReportTypeBadge type={report.type} /></td>
                 <td>{report.category ?? "Unnamed category"}</td>
-                <td>{report.location ?? "Unnamed location"}{report.building && <span className="block text-xs text-ink-3">{report.building}</span>}</td>
+                <td>{report.location ?? "Unnamed location"}{report.building && <span className="block text-meta text-ink-3">{report.building}</span>}</td>
                 <td className="tabular-nums"><DateText value={report.date} /></td>
               </tr>)}</tbody>
             </table>

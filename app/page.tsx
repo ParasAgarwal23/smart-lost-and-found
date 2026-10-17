@@ -35,7 +35,7 @@ export default async function Home() {
           <h1 className="font-display text-[2.3rem] font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
             Lost something on campus? <span className="text-brand">Let&apos;s bring it back.</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-xl text-lg text-ink-2">Search everything that has been reported, or tell us what you lost or found.</p>
+          <p className="mx-auto mt-4 max-w-xl text-balance text-lg text-ink-2">Search everything that has been reported, or tell us what you lost or found.</p>
           <form action="/search" method="get" role="search" aria-label="Search reports" className="mx-auto mt-8 flex max-w-xl flex-col gap-2 rounded-2xl border border-field bg-surface p-2 shadow-sm sm:flex-row">
             <label htmlFor="home-search" className="sr-only">What are you looking for?</label>
             <div className="relative flex-1">
@@ -97,15 +97,20 @@ export default async function Home() {
           {recent.length === 0 ? (
             <p className="mt-4 text-sm text-ink-2">No found items have been reported yet.</p>
           ) : (
-            <ul className="mt-4 grid grid-cols-1 divide-y divide-line rounded-xl border border-line bg-surface">
+            <ul className="mt-4 grid grid-cols-1 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
               {recent.map((item) => (
-                <li key={item.Found_ID} className="flex min-w-0 items-center gap-3 p-3">
-                  <Icon name="box" size={18} className="text-brand" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold">{item.Item_Name ?? "Unnamed item"}</span>
-                    <span className="block truncate text-xs text-ink-3">{placeLabel(item.Location_Name, item.Building)}</span>
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-3">{formatDate(item.Date_Found)}</span>
+                <li key={item.Found_ID} className="min-w-0">
+                  {/* Opens the existing search, filtered to found items with this name. */}
+                  <Link href={item.Item_Name ? `/search?type=Found&text=${encodeURIComponent(item.Item_Name)}` : "/search?type=Found"}
+                    className="group flex min-w-0 items-center gap-3 p-3 hover:bg-sunken/60 focus-visible:-outline-offset-2">
+                    <Icon name="box" size={18} className="text-brand" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold group-hover:text-brand">{item.Item_Name ?? "Unnamed item"}</span>
+                      <span className="block truncate text-meta text-ink-3">{placeLabel(item.Location_Name, item.Building)}</span>
+                    </span>
+                    <span className="shrink-0 text-meta text-ink-3">{formatDate(item.Date_Found)}</span>
+                    <Icon name="arrowRight" size={16} className="shrink-0 text-ink-3 group-hover:text-brand" />
+                  </Link>
                 </li>
               ))}
             </ul>

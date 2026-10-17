@@ -6,8 +6,10 @@ import { getFoundReportContext, type FoundReportContext } from "@/lib/found-repo
 import ClaimLink from "@/app/claim/claim-link";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getPotentialMatches, getUserLostReports, type PotentialMatch, type UserLostReport } from "@/lib/potential-matches";
+import AutoSubmit from "@/components/auto-submit";
+import ExpandableText from "@/components/expandable-text";
 import { Icon } from "@/components/icons";
-import { BackLink, EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
+import { BackLink, Badge, EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +43,9 @@ export default async function PotentialMatchesPage({ searchParams }: {
   } catch { /* Preserve similarity results even when extra context cannot load. */ }
   const selectedReport = typeof lostId === "string" ? reports.find((report) => String(report.Lost_ID) === lostId) : undefined;
   const pendingEmbedding = selectedReport && !selectedReport.Has_Embedding;
+  // Label the highest similarity score, not merely the first row returned.
+  const bestFoundId = matches.reduce<PotentialMatch | undefined>(
+    (best, match) => (!best || match.Cosine_Similarity > best.Cosine_Similarity ? match : best), undefined)?.Found_ID;
 
   return (
     <main id="main-content" tabIndex={-1} className="container-page max-w-3xl py-8 sm:py-12">
@@ -50,6 +55,7 @@ export default async function PotentialMatchesPage({ searchParams }: {
 
       {reports.length > 0 && (
         <form action="/potential-matches" method="get" className="card mt-6 flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+          <AutoSubmit resultsId="matches" />
           <div className="field flex-1">
             <label htmlFor="lostId" className="label">Your lost item</label>
             <select id="lostId" name="lostId" required defaultValue={selectedReport?.Lost_ID ?? ""} className="input">
@@ -61,11 +67,12 @@ export default async function PotentialMatchesPage({ searchParams }: {
               ))}
             </select>
           </div>
-          <button type="submit" className="btn btn-primary">Show matches</button>
+          {/* Choosing a report loads its matches; the button is only needed without JavaScript. */}
+          <noscript><button type="submit" className="btn btn-primary">Show matches</button></noscript>
         </form>
       )}
 
-      <section aria-labelledby="matches-heading" className="mt-8">
+      <section id="matches" aria-labelledby="matches-heading" className="results-region mt-8">
         <h2 id="matches-heading" className="sr-only">{selectedReport ? `Matches for ${selectedReport.Item_Name ?? "your lost item"}` : "Matches"}</h2>
         {error ? (
           <Notice tone={pendingEmbedding ? "warning" : "error"}
@@ -100,15 +107,16 @@ export default async function PotentialMatchesPage({ searchParams }: {
                     <article data-found-id={match.Found_ID} className="card report-card rail-match">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
+                          {match.Found_ID === bestFoundId && <p className="mb-1.5"><Badge tone="match" icon="sparkles">Best match</Badge></p>}
                           <h3 className="text-lg font-bold">{match.Item_Name ?? "Unnamed item"}</h3>
                           {context && <p className="text-sm text-ink-3">Found {formatDate(context.Date_Found)} · {placeLabel(context.Location_Name, context.Building)}</p>}
                         </div>
                         <p className="shrink-0 text-right">
                           <span className="font-display block text-2xl font-semibold leading-none">{percent}%</span>
-                          <span className="text-xs text-ink-3">similar</span>
+                          <span className="text-meta text-ink-3">similar</span>
                         </p>
                       </div>
-                      <p className="line-clamp-3 whitespace-pre-wrap text-sm text-ink-2">{match.Description ?? "No description supplied."}</p>
+                      <ExpandableText text={match.Description ?? "No description supplied."} className="text-sm text-ink-2" />
                       <div className="card-actions">
                         <ClaimLink foundId={match.Found_ID} context={context} signedIn />
                       </div>

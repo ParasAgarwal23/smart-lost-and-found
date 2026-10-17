@@ -19,12 +19,12 @@ export default async function ClaimEvidencePage({ searchParams }: {
   if (!user) redirect(loginPath("/claim/evidence"));
   const { claimId } = await searchParams;
 
-  let claims: { Claim_ID: number; Item_Name: string | null; Has_Handover: boolean }[] = [];
+  let claims: { Claim_ID: number; Item_Name: string | null; Claim_Date: string | null; Has_Handover: boolean }[] = [];
   let evidence: { Claim_ID: number; Evidence_No: number; Evidence_Description: string | null }[] = [];
   let error: string | null = null;
   try {
     const result = await query<(typeof claims)[number]>(
-      `SELECT c."Claim_ID", f."Item_Name",
+      `SELECT c."Claim_ID", f."Item_Name", c."Claim_Date"::text AS "Claim_Date",
               EXISTS (SELECT 1 FROM public."CLAIM" other JOIN public."HANDOVER" h ON h."Claim_ID" = other."Claim_ID"
                       WHERE other."Found_ID" = c."Found_ID") AS "Has_Handover"
        FROM public."CLAIM" c

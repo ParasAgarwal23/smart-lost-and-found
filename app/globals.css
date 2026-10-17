@@ -161,6 +161,8 @@
   .rail-done { --rail: var(--color-success); }
   .meta { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; font-size: 0.85rem; color: var(--color-ink-3); }
   .meta > * { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; }
+  .text-meta { font-size: 0.8125rem; line-height: 1.25rem; }
+  .results-region[aria-busy="true"] { opacity: 0.55; pointer-events: none; }
   .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--color-line); }
 
   /* Definition grids */
