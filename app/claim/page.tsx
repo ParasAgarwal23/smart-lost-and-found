@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { loginPath } from "@/lib/next-path";
+import { loginPath, withNumericParam } from "@/lib/next-path";
 import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
@@ -31,12 +31,18 @@ type MyClaim = {
 
 type EligibleReport = ClaimableReport & { Description: string | null; Building: string | null };
 
+type StepState = "done" | "current" | "upcoming" | "skipped" | "closed";
+// Spoken after each step label, so progress never relies on bar colour alone.
+const stepStatus: Record<StepState, string> = {
+  done: "done", current: "next step", upcoming: "not started", skipped: "skipped", closed: "closed",
+};
+
 export default async function ClaimPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { foundId } = await searchParams;
   const user = await getAuthenticatedUser();
-  if (!user) redirect(loginPath(typeof foundId === "string" && /^-?\d+$/.test(foundId) ? `/claim?foundId=${foundId}` : "/claim"));
+  if (!user) redirect(loginPath(withNumericParam("/claim", "foundId", foundId)));
 
   let reports: EligibleReport[] = [];
   let error: string | null = null;
@@ -94,8 +100,8 @@ export default async function ClaimPage({ searchParams }: {
     ? requestedId : undefined;
   // One explanation (and one next step) when the requested item can't be claimed.
   let blocked: BlockedClaim | null = null;
+  let context: FoundReportContext | undefined;
   if (!error && foundId !== undefined && initialFoundId === undefined) {
-    let context: FoundReportContext | undefined;
     if (Number.isInteger(requestedId) && requestedId >= -2147483648 && requestedId <= 2147483647) {
       try { [context] = await getFoundReportContext([requestedId], user.User_ID); } catch { /* Fall back to the general message. */ }
     }
@@ -106,7 +112,9 @@ export default async function ClaimPage({ searchParams }: {
       : context.Has_Handover ? { message: "This found report is unavailable to claim. It has already been returned to its owner.", action: search }
       : { message: "This found report is unavailable to claim right now.", action: search };
   }
-  const requested = reports.find((report) => report.Found_ID === initialFoundId);
+  // The item stays named in the heading even when it cannot be claimed, including
+  // straight after this user claims it (the page then refreshes with it blocked).
+  const requested = reports.find((report) => report.Found_ID === initialFoundId) ?? context;
   const arrivedToClaim = foundId !== undefined;
 
   // One claim form, shown first when the user arrived via "Claim this item".
@@ -145,8 +153,20 @@ export default async function ClaimPage({ searchParams }: {
               const evidenceCount = Number(claim.Evidence_Count);
               const received = claim.Handover_ID !== null;
               const closedByOther = !received && claim.Item_Handed_Over;
+              const open = !received && !closedByOther;
               const evidenceHref = `/claim/evidence?claimId=${claim.Claim_ID}#evidence-${claim.Claim_ID}`;
               const handoverHref = `/claim/handover?claimId=${claim.Claim_ID}`;
+              // Proof is added after claiming (CLAIM_EVIDENCE rows belong to a CLAIM).
+              // A step is "done" only when its row exists; once the item has been
+              // handed over, unfinished steps are shown as skipped or closed.
+              const steps: { state: StepState; label: string }[] = [
+                { state: "done", label: "Claim submitted" },
+                evidenceCount > 0 ? { state: "done", label: `Proof added (${evidenceCount})` }
+                  : open ? { state: "current", label: "Add proof" } : { state: "skipped", label: "No proof added" },
+                received ? { state: "done", label: "Item received" }
+                  : closedByOther ? { state: "closed", label: "Returned to someone else" }
+                  : { state: evidenceCount > 0 ? "current" : "upcoming", label: "Confirm receipt" },
+              ];
               return (
                 <li key={claim.Claim_ID}>
                   <article id={`claim-${claim.Claim_ID}`} className={`card report-card ${received ? "rail-done" : closedByOther ? "" : "rail-claim"}`}>
@@ -154,16 +174,10 @@ export default async function ClaimPage({ searchParams }: {
                     <p className="text-sm text-ink-3">
                       {claim.Category_Name ?? "Unnamed category"} · {placeLabel(claim.Location_Name, claim.Building)} · claimed {formatDate(claim.Claim_Date)}
                     </p>
-                    {/* Proof is added after claiming (CLAIM_EVIDENCE rows belong to a CLAIM).
-                        Each step is marked done only when its row exists. */}
                     <ol className="steps" aria-label="Claim progress">
-                      {[
-                        { done: true, label: "Claim submitted" },
-                        { done: evidenceCount > 0, label: evidenceCount > 0 ? `Proof added (${evidenceCount})` : received || closedByOther ? "No proof added" : "Add proof" },
-                        { done: received, label: received ? "Item received" : closedByOther ? "Returned to someone else" : "Confirm receipt" },
-                      ].map((step) => (
-                        <li key={step.label} className="step" data-done={step.done}>
-                          {step.label}<span className="sr-only">{step.done ? " (done)" : " (not done)"}</span>
+                      {steps.map((step) => (
+                        <li key={step.label} className="step" data-state={step.state} data-done={step.state === "done"}>
+                          {step.label}<span className="sr-only">{` (${stepStatus[step.state]})`}</span>
                         </li>
                       ))}
                     </ol>
@@ -178,17 +192,20 @@ export default async function ClaimPage({ searchParams }: {
                         <p><span className="font-semibold">Next step:</span> once you have the item back, confirm you received it.</p>
                       )}
                     </div>
-                    <div className="card-actions">
-                      {!received && !closedByOther && evidenceCount === 0 && <Link href={evidenceHref} className="btn btn-primary btn-sm"><Icon name="file" size={16} />Add evidence</Link>}
-                      {!received && !closedByOther && evidenceCount > 0 && <Link href={handoverHref} className="btn btn-primary btn-sm"><Icon name="gift" size={16} />Confirm item received</Link>}
-                      {evidenceCount > 0 && (
-                        <Link href={evidenceHref} className="link-quiet">
-                          <Icon name="file" size={15} />{received || closedByOther ? "View evidence" : "View or add evidence"} <span className="text-ink-3" data-evidence-count={evidenceCount}>({evidenceCount})</span>
-                        </Link>
-                      )}
-                      {!received && !closedByOther && evidenceCount === 0 && <Link href={handoverHref} className="link-quiet">Already received it?</Link>}
-                      {!received && <span className="sm:ml-auto"><WithdrawClaim claimId={claim.Claim_ID} evidenceCount={evidenceCount} /></span>}
-                    </div>
+                    {/* A completed claim without evidence has no actions, so no empty footer. */}
+                    {(!received || evidenceCount > 0) && (
+                      <div className="card-actions">
+                        {open && evidenceCount === 0 && <Link href={evidenceHref} className="btn btn-primary btn-sm"><Icon name="file" size={16} />Add evidence</Link>}
+                        {open && evidenceCount > 0 && <Link href={handoverHref} className="btn btn-primary btn-sm"><Icon name="gift" size={16} />Confirm item received</Link>}
+                        {evidenceCount > 0 && (
+                          <Link href={evidenceHref} className="link-quiet">
+                            <Icon name="file" size={15} />{open ? "View or add evidence" : "View evidence"} <span className="text-ink-3" data-evidence-count={evidenceCount}>({evidenceCount})</span>
+                          </Link>
+                        )}
+                        {open && evidenceCount === 0 && <Link href={handoverHref} className="link-quiet">Already received it?</Link>}
+                        {!received && <span className="sm:ml-auto"><WithdrawClaim claimId={claim.Claim_ID} evidenceCount={evidenceCount} /></span>}
+                      </div>
+                    )}
                   </article>
                 </li>
               );

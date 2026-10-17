@@ -54,7 +54,7 @@ export default function ReportForm({ kind, categories, locations, today, edit }:
       <p className="text-sm text-ink-3">All fields are required.</p>
 
       <fieldset className="grid gap-5">
-        <legend className="mb-1 text-base font-bold">About the item</legend>
+        <legend className="mb-3 text-base font-bold">About the item</legend>
         <Field id="itemName" label="What is it?" error={errors.itemName}>
           <input id="itemName" name="itemName" value={values.itemName} onChange={set("itemName")} required maxLength={100}
             autoComplete="off" placeholder={lost ? "e.g. Black phone in a navy case" : "e.g. Grey calculator with cover"}
@@ -82,8 +82,8 @@ export default function ReportForm({ kind, categories, locations, today, edit }:
         </Field>
       </fieldset>
 
-      <fieldset className="grid gap-5 sm:grid-cols-2">
-        <legend className="mb-1 text-base font-bold">Where and when</legend>
+      <fieldset className="grid gap-5">
+        <legend className="mb-3 text-base font-bold">Where and when</legend>
         <Field id="locationId" label={lost ? "Where did you lose it?" : "Where did you find it?"} error={errors.locationId}>
           <select id="locationId" name="locationId" value={values.locationId} onChange={set("locationId")} required
             className="input" aria-invalid={!!errors.locationId}
@@ -99,7 +99,7 @@ export default function ReportForm({ kind, categories, locations, today, edit }:
         </Field>
         <Field id={dateField} label={lost ? "Date lost" : "Date found"} error={errors[dateField]}>
           <input id={dateField} name={dateField} type="date" value={values.date} onChange={set("date")} required max={today}
-            className="input" aria-invalid={!!errors[dateField]}
+            className="input sm:max-w-60" aria-invalid={!!errors[dateField]}
             aria-describedby={describedBy(dateField, { error: !!errors[dateField] }, "report-feedback")} />
         </Field>
       </fieldset>

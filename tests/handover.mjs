@@ -297,8 +297,20 @@ async function workflowBeforeHandover() {
   for (const bad of ['https://example.com', '//example.com', '/\\example.com', '/login', '/', '/lost-report/../admin', 'javascript:alert(1)', ['/claim'], '/claim?x=<script>']) assert.equal(safeNextPath(bad), null);
   assert.equal(loginPath('/lost-report'), '/login?next=%2Flost-report');
   assert.equal(loginPath('https://example.com'), '/login');
+  // The item chosen in Search is named in the heading and submitted directly, without a second picker.
   const selected = await renderPage('app/claim/page.tsx', users[0], { foundId: String(reports[3]) });
-  assert.ok(selected.match(new RegExp(`<option[^>]*value="${reports[3]}"[^>]*selected`)));
+  assert.ok(selected.match(new RegExp(`<input[^>]*type="hidden"[^>]*id="foundId"[^>]*value="${reports[3]}"`)));
+  assert.ok(!selected.includes('<select') && selected.includes(`Claim “Regression item ${reports[3]}”`));
+  // Signing in from a protected link returns to the same record, with a specific reason.
+  const { nextPurpose } = loadProduction('lib/next-path.ts');
+  for (const [page, params, next] of [['app/claim/page.tsx', { foundId: '-5' }, '/claim?foundId=-5'], ['app/claim/evidence/page.tsx', { claimId: '7' }, '/claim/evidence?claimId=7'],
+    ['app/claim/handover/page.tsx', { claimId: 'x' }, '/claim/handover'], ['app/potential-matches/page.tsx', { lostId: '9' }, '/potential-matches?lostId=9'],
+    ['app/my-reports/edit/page.tsx', { type: 'found', id: '3' }, '/my-reports/edit?type=found&id=3']]) {
+    await assert.rejects(renderPage(page, null, params), (error) => error.digest?.includes(`/login?next=${encodeURIComponent(next)};`));
+  }
+  assert.equal(nextPurpose('/claim?foundId=-5'), 'Sign in to claim this item.');
+  const visitorSearch = await renderPage('app/search/page.tsx', null, { category: String(id), type: 'Found' });
+  assert.ok(visitorSearch.includes(`href="/login?next=${encodeURIComponent(`/claim?foundId=${reports[3]}`)}"`), 'Visitors return to the claim form after signing in');
   for (const foundId of ['invalid', '2147483648', [String(reports[3])], String(reports[0])]) {
     const rejected = await renderPage('app/claim/page.tsx', users[0], { foundId });
     assert.ok(rejected.includes('This found report is unavailable to claim.'));
@@ -391,6 +403,7 @@ async function workflowBeforeHandover() {
   assert.ok(card.includes(`/claim/evidence?claimId=${createdClaimId}#evidence-${createdClaimId}`));
   assert.ok(card.includes('Add evidence'));
   assert.ok(/data-done="true">Claim submitted/.test(card) && /data-done="false">Add proof/.test(card) && /data-done="false">Confirm receipt/.test(card), 'A new claim has only its first step done');
+  assert.ok(/data-state="current" data-done="false">Add proof<span class="sr-only"> \(next step\)/.test(card) && /data-state="upcoming" data-done="false">Confirm receipt/.test(card), 'Adding proof is marked as the next step');
   assert.ok(card.includes(`/claim/handover?claimId=${createdClaimId}`));
   console.log('PASS Batch 2 D/E/P/T: committed ID returned, refreshed history, real overlapping duplicate prevention, no mutation redirect');
 
@@ -445,6 +458,7 @@ async function workflowBeforeHandover() {
   const evidenceCard = claimCard(afterEvidence, createdClaimId);
   assert.ok(evidenceCard.includes('data-evidence-count="2"'));
   assert.ok(/data-done="true">Proof added \(2\)/.test(evidenceCard) && /data-done="false">Confirm receipt/.test(evidenceCard), 'Progress shows only the steps that really happened');
+  assert.ok(/data-state="current" data-done="false">Confirm receipt/.test(evidenceCard), 'With proof added, confirming receipt becomes the current step');
   assert.ok(evidenceCard.includes('View or add evidence'));
   assert.ok(evidenceCard.includes('Confirm item received'), 'With evidence added, confirming receipt becomes the next step');
   assert.ok(!afterEvidence.includes('Private regression ownership detail'));
@@ -470,20 +484,33 @@ async function workflowAfterHandover(createdClaimId) {
   const ownReceipt = claimCard(own, claims[0]);
   assert.ok(ownReceipt.includes('Receipt recorded'));
   assert.ok(/data-done="true">Item received/.test(ownReceipt));
+  assert.ok(/data-state="skipped" data-done="false">No proof added<span class="sr-only"> \(skipped\)/.test(ownReceipt), 'Proof that was never added is shown as skipped, not pending');
   assert.ok(!ownReceipt.includes('/claim/handover?'));
+  assert.ok(!ownReceipt.includes('card-actions'), 'A completed claim with no evidence has no empty action bar');
   assert.ok(!own.includes('Test receipt'));
   const other = await renderPage('app/claim/page.tsx', users[1]);
   const otherReceipt = claimCard(other, claims[1]);
   assert.ok(otherReceipt.includes('This item has already been handed over.'));
   assert.ok(/data-done="false">Returned to someone else/.test(otherReceipt) && !otherReceipt.includes('Item received'), 'A competing receipt is never shown as this claimant receiving the item');
+  assert.ok(/data-state="closed" data-done="false">Returned to someone else<span class="sr-only"> \(closed\)/.test(otherReceipt));
   assert.ok(!otherReceipt.includes('/claim/handover?'));
+  // Evidence for a finished claim is read-only, and the evidence picker offers only open claims.
   for (const [user, claimId] of [[users[0], claims[0]], [users[1], claims[1]]]) {
+    const closedEvidence = await renderPage('app/claim/evidence/page.tsx', user, { claimId: String(claimId) });
+    assert.ok(closedEvidence.includes('this claim is closed') && closedEvidence.includes(`id="evidence-${claimId}"`));
+    assert.ok(!closedEvidence.includes('id="description"') && !closedEvidence.includes('type="submit"'));
+  }
+  const evidencePicker = (await renderPage('app/claim/evidence/page.tsx', users[0])).match(/<select[^>]*id="claimId"[\s\S]*?<\/select>/)?.[0] ?? '';
+  assert.ok(evidencePicker.includes(`value="${createdClaimId}"`) && !evidencePicker.includes(`value="${claims[0]}"`), 'Handed-over claims are not offered for new evidence');
+  // The owner's own finished claims are explained accurately, never reported as "not found".
+  for (const [user, claimId, message] of [[users[0], claims[0], 'You have already confirmed that you received this item.'], [users[1], claims[1], 'This item has already been handed over to someone else']]) {
     const ineligible = await renderPage('app/claim/handover/page.tsx', user, { claimId: String(claimId) }, (tree) => {
       assert.equal(formKey(tree, 'HandoverForm'), JSON.stringify(String(claimId)), 'Receipt revalidation must keep the raw route key even after eligibility changes');
     });
     assert.equal(selectedClaim(ineligible), undefined);
-    assert.ok(ineligible.includes('Claim not found or unavailable to your account.'));
+    assert.ok(ineligible.includes(message) && !ineligible.includes('Claim not found'));
   }
+  assert.ok((await renderPage('app/claim/handover/page.tsx', users[0], { claimId: String(claims[1]) })).includes('Claim not found or unavailable to your account.'), 'Another user\'s claim stays indistinguishable from a missing one');
   const available = claimCard(own, createdClaimId);
   assert.ok(available.includes(`/claim/handover?claimId=${createdClaimId}`));
   const offset = invalidatedPaths.length;
@@ -589,6 +616,10 @@ async function editReportChecks() {
     "Embedding"::text AS embedding, public.vector_dims("Embedding") AS dims
     FROM public."LOST_REPORT" WHERE "Lost_ID" = $1`, [lostId])).rows[0];
   const original = await row();
+  // In Search, the owner's own lost report leads to its possible matches instead of "Found this?".
+  const ownSearch = await renderPage('app/search/page.tsx', users[0], { category: String(id), type: 'Lost' });
+  assert.ok(ownSearch.includes(`href="/potential-matches?lostId=${lostId}"`) && !ownSearch.includes('Found this? Report it'));
+  assert.ok((await renderPage('app/search/page.tsx', users[1], { category: String(id), type: 'Lost' })).includes('Found this? Report it'));
 
   // The trigger itself: changing the description clears the stored vector,
   // while a date-only change does not. Rolled back so nothing persists.

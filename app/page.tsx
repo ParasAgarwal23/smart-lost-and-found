@@ -6,7 +6,7 @@ import { formatDate, placeLabel } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-type RecentFound = { Found_ID: number; Item_Name: string | null; Location_Name: string | null; Building: string | null; Date_Found: string | null };
+type RecentFound = { Found_ID: number; Item_Name: string | null; Location_Name: string | null; Building: string | null; Date_Found: string | null; Returned: boolean };
 
 const steps: { icon: IconName; title: string; text: string }[] = [
   { icon: "file", title: "Report it", text: "Describe what you lost or found." },
@@ -18,11 +18,14 @@ export default async function Home() {
   const user = await getAuthenticatedUser();
   let recent: RecentFound[] = [];
   try {
-    // Reads the report-detail view, which joins CATEGORY and LOCATION.
+    // Reads the report-detail view, which joins CATEGORY and LOCATION, and flags
+    // items that already have a handover so visitors know before they click.
     const result = await query<RecentFound>(
-      `SELECT "Found_ID", "Item_Name", "Location_Name", "Building", "Date_Found"::text AS "Date_Found"
-       FROM public.v_found_report_details
-       ORDER BY "Date_Found" DESC NULLS LAST, "Found_ID" DESC LIMIT 4`,
+      `SELECT f."Found_ID", f."Item_Name", f."Location_Name", f."Building", f."Date_Found"::text AS "Date_Found",
+              EXISTS (SELECT 1 FROM public."CLAIM" c JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
+                      WHERE c."Found_ID" = f."Found_ID") AS "Returned"
+       FROM public.v_found_report_details f
+       ORDER BY f."Date_Found" DESC NULLS LAST, f."Found_ID" DESC LIMIT 4`,
     );
     recent = result.rows;
   } catch { /* The homepage still works without the recent list. */ }
@@ -108,7 +111,10 @@ export default async function Home() {
                       <span className="block truncate font-semibold group-hover:text-brand">{item.Item_Name ?? "Unnamed item"}</span>
                       <span className="block truncate text-meta text-ink-3">{placeLabel(item.Location_Name, item.Building)}</span>
                     </span>
-                    <span className="shrink-0 text-meta text-ink-3">{formatDate(item.Date_Found)}</span>
+                    <span className="shrink-0 text-right text-meta">
+                      <span className="block text-ink-3">{formatDate(item.Date_Found)}</span>
+                      {item.Returned && <span className="block font-semibold text-success">Returned</span>}
+                    </span>
                     <Icon name="arrowRight" size={16} className="shrink-0 text-ink-3 group-hover:text-brand" />
                   </Link>
                 </li>

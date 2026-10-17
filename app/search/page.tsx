@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
+import { getUserLostReports } from "@/lib/potential-matches";
 import { getReportOptions } from "@/lib/reference-data";
 import { searchReports } from "@/lib/search";
 import ClaimLink from "@/app/claim/claim-link";
@@ -33,9 +34,16 @@ export default async function SearchPage({ searchParams }: {
   ]);
 
   let contexts: FoundReportContext[] = [];
-  try {
-    contexts = await getFoundReportContext(result.reports.filter((report) => report.Report_Type === "Found").map((report) => report.Report_ID), user?.User_ID ?? null);
-  } catch { /* Results remain readable; claim links show an availability warning. */ }
+  let ownLostIds = new Set<number>();
+  await Promise.all([
+    getFoundReportContext(result.reports.filter((report) => report.Report_Type === "Found").map((report) => report.Report_ID), user?.User_ID ?? null)
+      .then((rows) => { contexts = rows; })
+      .catch(() => { /* Results remain readable; claim links show an availability warning. */ }),
+    // The signed-in user's own lost reports link to their possible matches.
+    user && getUserLostReports(user.User_ID)
+      .then((rows) => { ownLostIds = new Set(rows.map((row) => row.Lost_ID)); })
+      .catch(() => { /* Fall back to the general "Found this?" action. */ }),
+  ]);
 
   const type = value("type") || "Both";
   const moreFiltersActive = !!(value("category") || value("location") || value("sort") === "oldest");
@@ -75,10 +83,11 @@ export default async function SearchPage({ searchParams }: {
           <legend className="sr-only">Show</legend>
           <span aria-hidden="true" className="text-sm font-semibold text-ink-2">Show</span>
           <div className="segmented min-w-[16rem]">
-            {[["Both", "All"], ["Lost", "Lost items"], ["Found", "Found items"]].map(([option, label]) => (
+            {[["Both", "All"], ["Lost", "Lost"], ["Found", "Found"]].map(([option, label]) => (
               <label key={option}>
                 <input type="radio" name="type" value={option} defaultChecked={type === option} />
-                {label}
+                {/* "items" is dropped on very narrow screens so labels stay on one line. */}
+                <span>{label}{option !== "Both" && <span className="max-[400px]:hidden">{" items"}</span>}</span>
               </label>
             ))}
           </div>
@@ -86,6 +95,7 @@ export default async function SearchPage({ searchParams }: {
         <details open={moreFiltersActive} className="group">
           <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-bold text-brand">
             <Icon name="filter" size={15} />More filters<span className="sr-only"> (category, location, sort order)</span>
+            <Icon name="chevronDown" size={15} className="transition-transform group-open:rotate-180" />
           </summary>
           <div className="mt-3 grid gap-4 sm:grid-cols-3">
             <div className="field">
@@ -157,7 +167,9 @@ export default async function SearchPage({ searchParams }: {
                     <div className="card-actions">
                       {report.Report_Type === "Found"
                         ? <ClaimLink foundId={report.Report_ID} context={contexts.find((context) => context.Found_ID === report.Report_ID)} signedIn={!!user} />
-                        : <Link href="/found-report" className="link-quiet"><Icon name="box" size={16} />Found this? Report it</Link>}
+                        : ownLostIds.has(report.Report_ID)
+                          ? <p className="flex items-start gap-2 text-sm text-ink-2"><Icon name="user" size={16} className="mt-0.5" /><span>You reported this item. <Link href={`/potential-matches?lostId=${report.Report_ID}`} className="link">See possible matches</Link></span></p>
+                          : <Link href="/found-report" className="link-quiet"><Icon name="box" size={16} />Found this? Report it</Link>}
                     </div>
                   </article>
                 </li>

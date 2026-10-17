@@ -19,9 +19,12 @@ type EditableReport = { Item_Name: string | null; Description: string | null; Ca
 export default async function EditReportPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect(loginPath("/my-reports"));
   const { type, id } = await searchParams;
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    const linked = (type === "lost" || type === "found") && typeof id === "string" && /^-?\d{1,10}$/.test(id);
+    redirect(loginPath(linked ? `/my-reports/edit?type=${type}&id=${id}` : "/my-reports"));
+  }
   const kind = type === "found" ? "found" : "lost";
   const back = { href: "/my-reports", label: "Back to My Reports" };
   const reportId = typeof id === "string" && /^-?\d+$/.test(id) ? Number(id) : NaN;

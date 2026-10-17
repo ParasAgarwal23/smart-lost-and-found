@@ -35,13 +35,15 @@ export async function runBrowserChecks({ users, id, pool }) {
   }
   async function evaluate(expression) {
     const result = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-    assert.ok(!result.exceptionDetails, 'Browser evaluation must succeed');
+    assert.ok(!result.exceptionDetails, `Browser evaluation must succeed: ${result.exceptionDetails?.exception?.description?.split('\n')[0]} in ${expression.trim().slice(0, 140)}`);
     return result.result.value;
   }
   async function until(expression, message, timeout = 20000) {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
-      if (await evaluate(expression)) return;
+      // Mid-navigation the old document can disappear (e.g. document.body is
+      // briefly null), so a failed evaluation means "not yet", not a failure.
+      if (await evaluate(expression).catch(() => false)) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error(message);

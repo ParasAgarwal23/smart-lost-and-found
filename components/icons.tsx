@@ -13,6 +13,7 @@ const paths = {
   info: <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4.5M12 8h.01" /></>,
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
   arrowLeft: <path d="M19 12H5M11 18l-6-6 6-6" />,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
   logOut: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   logIn: <><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><path d="m10 17 5-5-5-5M15 12H3" /></>,
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,

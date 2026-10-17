@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { loginPath } from "@/lib/next-path";
+import { loginPath, withNumericParam } from "@/lib/next-path";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { Icon } from "@/components/icons";
@@ -10,14 +10,14 @@ import EvidenceForm from "./evidence-form";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Add evidence" };
+export const metadata: Metadata = { title: "Claim evidence" };
 
 export default async function ClaimEvidencePage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect(loginPath("/claim/evidence"));
   const { claimId } = await searchParams;
+  const user = await getAuthenticatedUser();
+  if (!user) redirect(loginPath(withNumericParam("/claim/evidence", "claimId", claimId)));
 
   let claims: { Claim_ID: number; Item_Name: string | null; Claim_Date: string | null; Has_Handover: boolean }[] = [];
   let evidence: { Claim_ID: number; Evidence_No: number; Evidence_Description: string | null }[] = [];
@@ -54,24 +54,41 @@ export default async function ClaimEvidencePage({ searchParams }: {
     ? "Claim not found or unavailable to your account." : null;
   const selected = claims.find((claim) => claim.Claim_ID === initialClaimId);
   const selectedEvidence = evidence.filter((entry) => entry.Claim_ID === initialClaimId);
+  // Once an item has been handed over (to this user or someone else) the claim
+  // is finished, so its evidence is shown for reference without the form, and
+  // the picker offers only claims that are still open.
+  const openClaims = claims.filter((claim) => !claim.Has_Handover);
+  const closed = selected?.Has_Handover ?? false;
 
   return (
     <main id="main-content" tabIndex={-1} className="container-page max-w-2xl py-8 sm:py-12">
       <BackLink href="/claim">Back to My Claims</BackLink>
-      <h1 className="page-title">Add evidence</h1>
-      <p className="page-description">Help show the item is yours: a receipt number, a scratch or sticker, or what was inside. Only you can see your evidence.</p>
+      <h1 className="page-title">{closed ? "Claim evidence" : "Add evidence"}</h1>
+      <p className="page-description">
+        {closed
+          ? "The details you added to support this claim. Only you can see your evidence."
+          : "Help show the item is yours: a receipt number, a scratch or sticker, or what was inside. Only you can see your evidence."}
+      </p>
 
-      <section aria-label="Add evidence" className="card card-pad report-card rail-claim mt-6">
-        {selectionError && <Notice tone="warning">{selectionError}</Notice>}
-        {error ? <Notice tone="error">{error}</Notice> : claims.length === 0 ? (
-          <EmptyState icon="clipboard" title="You have no claims to add evidence to."
-            actions={<Link href="/search?type=Found" className="btn btn-primary btn-sm">Search found items</Link>}>
-            Claim a found item first, then add your evidence here.
-          </EmptyState>
-        ) : (
-          <EvidenceForm key={JSON.stringify(claimId) ?? "generic"} claims={claims} initialClaimId={initialClaimId} />
-        )}
-      </section>
+      {closed ? (
+        <Notice tone="info" className="mt-6">This item has already been handed over, so this claim is closed. Your evidence is kept here for reference.</Notice>
+      ) : (
+        <section aria-label="Add evidence" className="card card-pad report-card rail-claim mt-6">
+          {selectionError && <Notice tone="warning">{selectionError}</Notice>}
+          {error ? <Notice tone="error">{error}</Notice> : openClaims.length === 0 ? (
+            <EmptyState icon="clipboard" title={claims.length === 0 ? "You have no claims to add evidence to." : "None of your claims are waiting for evidence."}
+              actions={claims.length === 0
+                ? <Link href="/search?type=Found" className="btn btn-primary btn-sm">Search found items</Link>
+                : <Link href="/claim" className="btn btn-primary btn-sm">Back to My Claims</Link>}>
+              {claims.length === 0
+                ? "Claim a found item first, then add your evidence here."
+                : "Evidence can be added to a claim until its item is handed over."}
+            </EmptyState>
+          ) : (
+            <EvidenceForm key={JSON.stringify(claimId) ?? "generic"} claims={openClaims} initialClaimId={initialClaimId} />
+          )}
+        </section>
+      )}
 
       {selected && (
         <section id={`evidence-${selected.Claim_ID}`} aria-labelledby="submitted-evidence" className="mt-8">

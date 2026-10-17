@@ -38,6 +38,7 @@ export default function HandoverForm({ claims, initialClaimId, selectionError = 
         </Notice>
       )}
       <section aria-label="Record receipt" className="card card-pad report-card rail-done mt-6">
+        {selectionError && !done && <p role="alert" className="notice notice-warning"><Icon name="alert" size={18} className="mt-0.5" />{selectionError}</p>}
         {error ? <Notice tone="error">{error}</Notice> : !done && claims.length === 0 && (
           <div className="empty-state">
             <span className="empty-icon"><Icon name="gift" size={22} /></span>
@@ -46,8 +47,7 @@ export default function HandoverForm({ claims, initialClaimId, selectionError = 
           </div>
         )}
         {/* Expected action errors also trigger React's native reset; clear only on success above. */}
-        <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className={done ? "grid gap-5" : "mt-6 grid gap-5"}>
-          {selectionError && !done && <p role="alert" className="notice notice-warning"><Icon name="alert" size={18} className="mt-0.5" />{selectionError}</p>}
+        <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className="grid gap-5">
           {usable && <>
             <ClaimPicker claims={claims} initialClaimId={initialClaimId} value={claimId} onChange={setClaimId}
               label="Which item did you receive?" switchHref="/claim/handover" describedBy="handover-feedback" />

@@ -84,7 +84,7 @@ export default async function MyReportsPage() {
                       <EditLink type="lost" id={report.id} />
                       {report.Has_Embedding
                         ? <Link href={`/potential-matches?lostId=${report.id}`} className="btn btn-primary btn-sm"><Icon name="sparkles" size={16} />See matches</Link>
-                        : <span className="text-sm text-ink-3" title="Save the report once to prepare matching">Matches not ready</span>}
+                        : <Link href={`/potential-matches?lostId=${report.id}`} className="link-quiet"><Icon name="info" size={15} />Matches not ready</Link>}
                     </div>
                   </li>
                 ))}
