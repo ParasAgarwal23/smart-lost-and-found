@@ -123,6 +123,9 @@
   .input[aria-invalid="true"] { border-color: var(--color-danger); box-shadow: 0 0 0 3px rgb(180 35 24 / 0.12); }
   textarea.input { min-height: 7.5rem; resize: vertical; line-height: 1.55; }
   select.input { appearance: none; padding-right: 2.5rem; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%233f4a45' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.8rem center; }
+  /* A select still showing its disabled "Choose…" prompt reads like a placeholder, not a choice. */
+  select.input:has(option[value=""][disabled]:checked) { color: #6b7470; }
+  select.input option { color: var(--color-ink); }
   .field-error { display: flex; align-items: flex-start; gap: 0.35rem; font-size: 0.85rem; font-weight: 600; color: var(--color-danger); }
   .counter { font-size: 0.78rem; color: var(--color-ink-3); font-variant-numeric: tabular-nums; }
 
@@ -185,6 +188,11 @@
   .step::before { content: ""; height: 0.3rem; border-radius: 999px; background: var(--color-line); }
   .step[data-done="true"] { color: var(--color-brand-ink); }
   .step[data-done="true"]::before { background: var(--color-brand); }
+  /* The step the user should take now: a partly filled bar in the claim colour. */
+  .step[data-state="current"] { color: var(--color-claim-ink); }
+  .step[data-state="current"]::before { background: linear-gradient(90deg, var(--color-claim) 0 35%, var(--color-line) 35%); }
+  /* No longer applicable after a handover: a dashed bar instead of an empty one. */
+  .step[data-state="skipped"]::before, .step[data-state="closed"]::before { background: repeating-linear-gradient(90deg, var(--color-line-strong) 0 6px, transparent 6px 10px); }
 
   /* Tables */
   .data-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }

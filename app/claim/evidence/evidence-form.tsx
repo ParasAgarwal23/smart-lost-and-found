@@ -24,7 +24,7 @@ export default function EvidenceForm({ claims, initialClaimId }: {
 
   return (
     // Expected action errors also trigger React's native reset; clear only on success above.
-    <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className="mt-6 grid gap-5">
+    <form onReset={(event) => event.preventDefault()} action={action} aria-busy={pending} className="grid gap-5">
       <ClaimPicker claims={claims} initialClaimId={initialClaimId} value={claimId} onChange={setClaimId}
         label="Which claim is this for?" switchHref="/claim/evidence" error={errors.claimId ? "Choose one of your claims." : undefined}
         describedBy={describedBy("claimId", { error: !!errors.claimId }, "evidence-feedback")} />
@@ -39,7 +39,8 @@ export default function EvidenceForm({ claims, initialClaimId }: {
       {state.success && !state.error && (
         <nav aria-label="Next steps" className="flex flex-wrap gap-2">
           <Link href="/claim" className="btn btn-primary btn-sm"><Icon name="clipboard" size={16} />Back to My Claims</Link>
-          {state.claimId && <Link href={`/claim/evidence?claimId=${state.claimId}#evidence-${state.claimId}`} className="btn btn-secondary btn-sm">See all evidence for this claim</Link>}
+          {/* When the claim was chosen on My Claims, its evidence list is already below. */}
+          {state.claimId && state.claimId !== initialClaimId && <Link href={`/claim/evidence?claimId=${state.claimId}#evidence-${state.claimId}`} className="btn btn-secondary btn-sm">See all evidence for this claim</Link>}
         </nav>
       )}
       <div className="divider flex justify-end pt-5">

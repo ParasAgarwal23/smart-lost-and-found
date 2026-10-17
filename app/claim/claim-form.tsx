@@ -43,9 +43,12 @@ export default function ClaimForm({ reports, initialFoundId, blocked = null, una
           </div>
         </div>
       )}
-      {!unavailable && !blocked && reports.length > 0 && (
+      {/* An item chosen on the previous page is already named in the heading,
+          so it is submitted directly rather than asked for again. */}
+      {!unavailable && !blocked && initialFoundId !== undefined && <input type="hidden" id="foundId" name="foundId" value={initialFoundId} />}
+      {!unavailable && !blocked && initialFoundId === undefined && reports.length > 0 && (
         <Field id="foundId" label="Item you are claiming" hint="Only items you can claim are listed (not your own reports, items you already claimed, or items already returned).">
-          <select id="foundId" name="foundId" required disabled={unavailable || reports.length === 0} value={foundId} onChange={(event) => setFoundId(event.target.value)} aria-describedby="foundId-hint claim-feedback" className="input">
+          <select id="foundId" name="foundId" required value={foundId} onChange={(event) => setFoundId(event.target.value)} aria-describedby="foundId-hint claim-feedback" className="input">
             <option value="" disabled>Choose a found item</option>
             {reports.map((report) => (
               <option key={report.Found_ID} value={report.Found_ID}>

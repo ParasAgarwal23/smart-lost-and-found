@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { loginPath } from "@/lib/next-path";
+import { loginPath, withNumericParam } from "@/lib/next-path";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { BackLink } from "@/components/ui";
@@ -13,9 +13,9 @@ export const metadata: Metadata = { title: "Confirm item received" };
 export default async function HandoverPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect(loginPath("/claim/handover"));
   const { claimId } = await searchParams;
+  const user = await getAuthenticatedUser();
+  if (!user) redirect(loginPath(withNumericParam("/claim/handover", "claimId", claimId)));
 
   let claims: HandoverClaim[] = [];
   let error: string | null = null;
@@ -41,8 +41,26 @@ export default async function HandoverPage({ searchParams }: {
   const requestedId = typeof claimId === "string" && /^-?\d+$/.test(claimId) ? Number(claimId) : NaN;
   const initialClaimId = Number.isInteger(requestedId) && requestedId >= -2147483648 && requestedId <= 2147483647 &&
     claims.some((claim) => claim.Claim_ID === requestedId) ? requestedId : undefined;
-  const selectionError = !error && claimId !== undefined && initialClaimId === undefined
-    ? "Claim not found or unavailable to your account." : null;
+  let selectionError: string | null = null;
+  if (!error && claimId !== undefined && initialClaimId === undefined) {
+    selectionError = "Claim not found or unavailable to your account.";
+    // The user's own claim is ineligible only because its item has a handover
+    // (e.g. this page was reloaded after confirming), so say that instead.
+    if (Number.isInteger(requestedId) && requestedId >= -2147483648 && requestedId <= 2147483647) {
+      try {
+        const own = await query<{ Own_Receipt: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM public."HANDOVER" h WHERE h."Claim_ID" = c."Claim_ID") AS "Own_Receipt"
+           FROM public."CLAIM" c WHERE c."Claim_ID" = $1 AND c."User_ID" = $2`,
+          [requestedId, user.User_ID],
+        );
+        if (own.rows[0]) {
+          selectionError = own.rows[0].Own_Receipt
+            ? "You have already confirmed that you received this item."
+            : "This item has already been handed over to someone else, so this claim can't be confirmed.";
+        }
+      } catch { /* Keep the general message. */ }
+    }
+  }
 
   return (
     <main id="main-content" tabIndex={-1} className="container-page max-w-2xl py-8 sm:py-12">

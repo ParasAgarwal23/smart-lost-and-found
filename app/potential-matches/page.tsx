@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { loginPath } from "@/lib/next-path";
+import { loginPath, withNumericParam } from "@/lib/next-path";
 import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
 import ClaimLink from "@/app/claim/claim-link";
 import { getAuthenticatedUser } from "@/lib/auth";
@@ -18,10 +18,10 @@ export const metadata: Metadata = { title: "Possible matches" };
 export default async function PotentialMatchesPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect(loginPath("/potential-matches"));
-
   const { lostId } = await searchParams;
+  const user = await getAuthenticatedUser();
+  if (!user) redirect(loginPath(withNumericParam("/potential-matches", "lostId", lostId)));
+
   const selected = lostId !== undefined && lostId !== "";
   let reports: UserLostReport[] = [];
   let matches: PotentialMatch[] = [];
@@ -76,7 +76,11 @@ export default async function PotentialMatchesPage({ searchParams }: {
         <h2 id="matches-heading" className="sr-only">{selectedReport ? `Matches for ${selectedReport.Item_Name ?? "your lost item"}` : "Matches"}</h2>
         {error ? (
           <Notice tone={pendingEmbedding ? "warning" : "error"}
-            action={<Link href="/search?type=Found" className="btn btn-secondary btn-sm"><Icon name="search" size={16} />Search found items instead</Link>}>
+            action={<div className="flex flex-wrap gap-2">
+              {/* Saving the report (even unchanged) stores its description vector. */}
+              {pendingEmbedding && <Link href={`/my-reports/edit?type=lost&id=${selectedReport.Lost_ID}`} className="btn btn-primary btn-sm"><Icon name="edit" size={16} />Edit and save report</Link>}
+              <Link href="/search?type=Found" className="btn btn-secondary btn-sm"><Icon name="search" size={16} />Search found items instead</Link>
+            </div>}>
             {error}
           </Notice>
         ) : reports.length === 0 ? (
@@ -104,7 +108,8 @@ export default async function PotentialMatchesPage({ searchParams }: {
                 const percent = Math.round(Math.max(0, Math.min(1, match.Cosine_Similarity)) * 100);
                 return (
                   <li key={match.Found_ID} className="min-w-0">
-                    <article data-found-id={match.Found_ID} className="card report-card rail-match">
+                    {/* Ranking is unchanged; items already handed over just lose the accent rail. */}
+                    <article data-found-id={match.Found_ID} className={`card report-card ${context?.Has_Handover ? "" : "rail-match"}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           {match.Found_ID === bestFoundId && <p className="mb-1.5"><Badge tone="match" icon="sparkles">Best match</Badge></p>}

@@ -4,6 +4,7 @@ import { query } from "@/lib/db";
 
 export type FoundReportContext = {
   Found_ID: number;
+  Item_Name: string | null;
   Category_Name: string | null;
   Location_Name: string | null;
   Building: string | null;
@@ -17,7 +18,7 @@ export type FoundReportContext = {
 export async function getFoundReportContext(foundIds: number[], userId: number | null) {
   if (foundIds.length === 0) return [];
   const result = await query<FoundReportContext>(
-    `SELECT f."Found_ID", f."Category_Name", f."Location_Name", f."Building",
+    `SELECT f."Found_ID", f."Item_Name", f."Category_Name", f."Location_Name", f."Building",
             f."Date_Found"::text AS "Date_Found",
             COALESCE(f."User_ID" = $2, false) AS "Is_Own_Report",
             (SELECT c."Claim_ID" FROM public."CLAIM" c
