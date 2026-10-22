@@ -17,6 +17,7 @@ const steps: { icon: IconName; title: string; text: string }[] = [
 export default async function Home() {
   const user = await getAuthenticatedUser();
   let recent: RecentFound[] = [];
+  let recentFailed = false;
   try {
     // Reads the report-detail view, which joins CATEGORY and LOCATION, and flags
     // items that already have a handover so visitors know before they click.
@@ -28,7 +29,10 @@ export default async function Home() {
        ORDER BY f."Date_Found" DESC NULLS LAST, f."Found_ID" DESC LIMIT 4`,
     );
     recent = result.rows;
-  } catch { /* The homepage still works without the recent list. */ }
+  } catch {
+    // The homepage still works without the recent list, but must not claim it is empty.
+    recentFailed = true;
+  }
 
   return (
     <main id="main-content" tabIndex={-1}>
@@ -43,7 +47,7 @@ export default async function Home() {
             <label htmlFor="home-search" className="sr-only">What are you looking for?</label>
             <div className="relative flex-1">
               <Icon name="search" size={19} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
-              <input id="home-search" name="text" type="search" placeholder="e.g. water bottle, student ID" className="input border-transparent pl-10 shadow-none focus:border-brand" />
+              <input id="home-search" name="text" type="search" placeholder="e.g. water bottle, student ID" className="input border-transparent pl-10 focus:border-brand" />
             </div>
             <button type="submit" className="btn btn-primary">Search</button>
           </form>
@@ -97,7 +101,9 @@ export default async function Home() {
             <h2 id="recent-heading" className="section-title">Recently found</h2>
             <Link href="/search?type=Found" className="link text-sm">See all found items</Link>
           </div>
-          {recent.length === 0 ? (
+          {recentFailed ? (
+            <p className="mt-4 text-sm text-ink-2">Recently found items can&apos;t be shown right now. Please try again later.</p>
+          ) : recent.length === 0 ? (
             <p className="mt-4 text-sm text-ink-2">No found items have been reported yet.</p>
           ) : (
             <ul className="mt-4 grid grid-cols-1 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">

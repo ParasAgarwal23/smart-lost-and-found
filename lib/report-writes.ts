@@ -13,6 +13,8 @@ export type ReportState = {
   reportId?: number;
   itemName?: string;
   fieldErrors?: Record<string, string>;
+  // The request had no signed-in session; the form offers a way to sign in again.
+  signedOut?: boolean;
 };
 
 // Table metadata. Identifiers come from this fixed map, never from user input.
@@ -34,7 +36,7 @@ export async function createReport(kind: ReportKind, formData: FormData): Promis
   const meta = TABLES[kind];
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: `Please sign in to create a ${meta.label} report. Your entries are still in the form.`, success: null };
+    if (!user) return { error: `Please sign in to create a ${meta.label} report. Your entries are still in the form.`, success: null, signedOut: true };
 
     const parsed = parseReportForm(kind, formData);
     if (!parsed.ok) return { error: "Please correct the highlighted fields.", success: null, fieldErrors: parsed.fieldErrors };
@@ -90,7 +92,7 @@ export async function updateReport(formData: FormData): Promise<ReportState> {
 
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: "Please sign in to edit your report. Your edits are still in the form.", success: null };
+    if (!user) return { error: "Please sign in to edit your report. Your edits are still in the form.", success: null, signedOut: true };
 
     const id = databaseId.safeParse(formData.get("reportId"));
     if (!id.success) return { error: "Report not found or unavailable to your account.", success: null };

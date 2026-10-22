@@ -35,7 +35,7 @@ export default function EvidenceForm({ claims, initialClaimId }: {
           aria-describedby={describedBy("description", { hint: true, error: !!errors.description }, "evidence-feedback")}
           aria-invalid={!!errors.description} required maxLength={255} rows={4} className="input" />
       </Field>
-      <FormFeedback id="evidence-feedback" error={state.error} success={state.success} />
+      <FormFeedback id="evidence-feedback" error={state.error} success={state.success} signedOut={state.signedOut} />
       {state.success && !state.error && (
         <nav aria-label="Next steps" className="flex flex-wrap gap-2">
           <Link href="/claim" className="btn btn-primary btn-sm"><Icon name="clipboard" size={16} />Back to My Claims</Link>

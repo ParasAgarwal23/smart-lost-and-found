@@ -56,7 +56,7 @@ export default function HandoverForm({ claims, initialClaimId, selectionError = 
               <input id="signature" name="signature" value={signature} onChange={(event) => setSignature(event.target.value)} aria-describedby="signature-hint handover-feedback" required maxLength={100} autoComplete="name" className="input" />
             </Field>
           </>}
-          <FormFeedback id="handover-feedback" error={state.error} success={state.success} />
+          <FormFeedback id="handover-feedback" error={state.error} success={state.success} signedOut={state.signedOut} />
           {done && (
             <nav aria-label="Next steps" className="flex flex-wrap gap-2">
               <Link href="/claim" className="btn btn-primary btn-sm"><Icon name="clipboard" size={16} />Back to My Claims</Link>

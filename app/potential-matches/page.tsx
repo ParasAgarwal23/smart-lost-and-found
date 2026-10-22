@@ -112,7 +112,12 @@ export default async function PotentialMatchesPage({ searchParams }: {
                     <article data-found-id={match.Found_ID} className={`card report-card ${context?.Has_Handover ? "" : "rail-match"}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          {match.Found_ID === bestFoundId && <p className="mb-1.5"><Badge tone="match" icon="sparkles">Best match</Badge></p>}
+                          {(match.Found_ID === bestFoundId || context?.Has_Handover) && (
+                            <p className="mb-1.5 flex flex-wrap gap-1.5">
+                              {match.Found_ID === bestFoundId && <Badge tone="match" icon="sparkles">Best match</Badge>}
+                              {context?.Has_Handover && <Badge tone="done" icon="gift">Returned</Badge>}
+                            </p>
+                          )}
                           <h3 className="text-lg font-bold">{match.Item_Name ?? "Unnamed item"}</h3>
                           {context && <p className="text-sm text-ink-3">Found {formatDate(context.Date_Found)} · {placeLabel(context.Location_Name, context.Building)}</p>}
                         </div>

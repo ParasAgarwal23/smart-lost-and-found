@@ -23,10 +23,12 @@ SELECT current_database() = 'smart_lost_found'
 
 -- Minimal prerequisite fixtures for the required CLAIM foreign keys.
 -- The password field is an unusable test placeholder, not a real credential.
--- No status values or other business rules are introduced.
+-- No status values or other business rules are introduced. Two test users are
+-- needed because CLAIM_User_ID_Found_ID_key allows one claim per user per item.
 BEGIN;
 INSERT INTO public."USER" ("User_ID", "Password_Hash")
-VALUES (-1, 'TRANSACTION_DEMO_NOT_A_USABLE_PASSWORD_HASH');
+VALUES (-1, 'TRANSACTION_DEMO_NOT_A_USABLE_PASSWORD_HASH'),
+       (-2, 'TRANSACTION_DEMO_NOT_A_USABLE_PASSWORD_HASH');
 INSERT INTO public."CATEGORY" ("Category_ID") VALUES (-1);
 INSERT INTO public."LOCATION" ("Location_ID") VALUES (-1);
 INSERT INTO public."FOUND_REPORT"
@@ -54,7 +56,7 @@ SELECT (SELECT COUNT(*) FROM public."CLAIM" WHERE "Claim_ID" = -1) = 1
 -- must be discarded, including its first valid evidence insertion.
 BEGIN;
 INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID")
-VALUES (-2, -1, -1);
+VALUES (-2, -2, -1);
 INSERT INTO public."CLAIM_EVIDENCE" ("Claim_ID", "Evidence_No")
 VALUES (-2, 1);
 \set ON_ERROR_STOP off
@@ -79,7 +81,7 @@ DELETE FROM public."CLAIM" WHERE "Claim_ID" IN (-1, -2);
 DELETE FROM public."FOUND_REPORT" WHERE "Found_ID" = -1;
 DELETE FROM public."LOCATION" WHERE "Location_ID" = -1;
 DELETE FROM public."CATEGORY" WHERE "Category_ID" = -1;
-DELETE FROM public."USER" WHERE "User_ID" = -1;
+DELETE FROM public."USER" WHERE "User_ID" IN (-1, -2);
 COMMIT;
 
 SELECT NOT EXISTS (SELECT 1 FROM public."USER")

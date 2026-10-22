@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type EvidenceState = { error: string | null; success: string | null; claimId?: number; fieldErrors?: Record<string, string> };
+export type EvidenceState = { error: string | null; success: string | null; claimId?: number; fieldErrors?: Record<string, string>; signedOut?: boolean };
 
 const evidenceSchema = z.object({
   claimId: z.string().regex(/^-?\d+$/).transform(Number)
@@ -21,7 +21,7 @@ export async function addClaimEvidence(
 ): Promise<EvidenceState> {
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: "Please sign in to add claim evidence.", success: null };
+    if (!user) return { error: "Please sign in to add claim evidence.", success: null, signedOut: true };
 
     const parsed = evidenceSchema.safeParse({
       claimId: formData.get("claimId"),
@@ -33,14 +33,36 @@ export async function addClaimEvidence(
     const { claimId, description } = parsed.data;
 
     await withTransaction(async (client) => {
+      // Lock the shared found report first (the same order as handover and
+      // withdrawal, so they cannot deadlock), then the owned claim itself.
+      const report = await client.query(
+        `SELECT f."Found_ID" FROM public."FOUND_REPORT" AS f
+         JOIN public."CLAIM" AS c ON c."Found_ID" = f."Found_ID"
+         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE OF f`,
+        [claimId, user.User_ID],
+      );
+      if (report.rows.length !== 1) {
+        throw new EvidenceError("Claim not found or unavailable to your account.");
+      }
+
       // Lock the parent, including when it has no evidence, before allocating its partial key.
-      const claim = await client.query<{ Claim_ID: number }>(
-        `SELECT "Claim_ID" FROM public."CLAIM"
-         WHERE "Claim_ID" = $1 AND "User_ID" = $2 FOR UPDATE`,
+      const claim = await client.query<{ handed_over: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM public."CLAIM" AS other
+           JOIN public."HANDOVER" AS h ON h."Claim_ID" = other."Claim_ID"
+           WHERE other."Found_ID" = c."Found_ID"
+         ) AS handed_over
+         FROM public."CLAIM" AS c
+         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE`,
         [claimId, user.User_ID],
       );
       if (claim.rows.length !== 1) {
         throw new EvidenceError("Claim not found or unavailable to your account.");
+      }
+      // A handover (to this claimant or another) closes every claim on the item,
+      // so a form left open in another tab cannot add evidence afterwards.
+      if (claim.rows[0].handed_over) {
+        throw new EvidenceError("This item has already been handed over, so this claim is closed and no more evidence can be added.");
       }
 
       const next = await client.query<{ evidence_no: string }>(

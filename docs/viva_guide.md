@@ -18,7 +18,7 @@ A revision sheet built from the actual code. Each topic gives the idea in plain 
 | Weak entity CLAIM_EVIDENCE (partial key `Evidence_No`) | PK `(Claim_ID, Evidence_No)`, FK to owner CLAIM | `CLAIM_EVIDENCE` |
 | 1:1 CLAIM–HANDOVER | FK in HANDOVER made `UNIQUE` | `HANDOVER."Claim_ID" UNIQUE` |
 
-`db/verify.sql` proves the live database matches this exactly (10 tables, 49 columns, 10 PKs, 13 FKs, 1 UNIQUE).
+`db/verify.sql` proves the live database matches this exactly (10 tables, 49 columns, 10 PKs, 13 FKs, 3 UNIQUE and 4 CHECK constraints).
 
 ## 3. Keys, constraints and normalization (§4, §12)
 
@@ -72,7 +72,7 @@ Every query uses `$1` parameters (no string concatenation), which prevents SQL i
 ## 8. Walkthroughs to narrate
 
 - **Report → match:** form → Zod validation → category/location existence check → embedding → `INSERT … $8::vector(384)` → Potential Matches calls `find_potential_matches`.
-- **Claim → evidence → handover:** `INSERT CLAIM` under a FOUND_REPORT lock → evidence numbered `MAX(Evidence_No)+1` under a CLAIM lock (weak-entity partial key) → handover locks FOUND_REPORT, checks no other claim was handed over, `INSERT HANDOVER` (UNIQUE backs it up).
+- **Claim → evidence → handover:** `INSERT CLAIM` under a FOUND_REPORT lock → evidence locks FOUND_REPORT then CLAIM (refused once the item has been handed over) and is numbered `MAX(Evidence_No)+1` under the CLAIM lock (weak-entity partial key) → handover locks FOUND_REPORT, checks no other claim was handed over, `INSERT HANDOVER` (UNIQUE backs it up).
 - **Withdraw:** locks FOUND_REPORT then CLAIM (same order as handover, so no deadlock), refuses if a handover exists, deletes evidence then the claim in one transaction.
 
 ## 9. Likely questions

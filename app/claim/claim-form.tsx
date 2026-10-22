@@ -58,7 +58,7 @@ export default function ClaimForm({ reports, initialFoundId, blocked = null, una
           </select>
         </Field>
       )}
-      <FormFeedback id="claim-feedback" error={state.error} success={state.success}>
+      <FormFeedback id="claim-feedback" error={state.error} success={state.success} signedOut={state.signedOut}>
         {state.success && !state.error && <p className="mt-1">Next, add proof that it&apos;s yours.</p>}
       </FormFeedback>
       {state.success && !state.error && (

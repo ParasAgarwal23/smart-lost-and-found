@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type ClaimState = { error: string | null; success: string | null; claimId?: number };
+export type ClaimState = { error: string | null; success: string | null; claimId?: number; signedOut?: boolean };
 
 const databaseId = z.string().regex(/^-?\d+$/).transform(Number)
   .pipe(z.number().int().min(-2147483648).max(2147483647));
@@ -27,7 +27,7 @@ export async function createClaim(
 ): Promise<ClaimState> {
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: "Please sign in to submit a claim.", success: null };
+    if (!user) return { error: "Please sign in to submit a claim.", success: null, signedOut: true };
 
     const parsed = claimSchema.safeParse({ foundId: formData.get("foundId") });
     if (!parsed.success) return { error: "Choose a valid found report.", success: null };
@@ -98,7 +98,7 @@ export async function createClaim(
   }
 }
 
-export type WithdrawState = { error: string | null; success: string | null };
+export type WithdrawState = { error: string | null; success: string | null; signedOut?: boolean };
 
 // DELETE workflow: remove the claimant's own claim and its weak-entity
 // evidence rows atomically. Locks FOUND_REPORT then CLAIM, the same order as
@@ -109,7 +109,7 @@ export async function withdrawClaim(
 ): Promise<WithdrawState> {
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: "Please sign in to withdraw a claim.", success: null };
+    if (!user) return { error: "Please sign in to withdraw a claim.", success: null, signedOut: true };
 
     const parsed = withdrawSchema.safeParse({ claimId: formData.get("claimId") });
     if (!parsed.success) return { error: "Claim not found or unavailable to your account.", success: null };

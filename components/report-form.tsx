@@ -106,7 +106,7 @@ export default function ReportForm({ kind, categories, locations, today, edit }:
 
       {missingOptions && <p className="hint">Categories and locations must be available before a report can be submitted.</p>}
 
-      <FormFeedback id="report-feedback" error={state.error} success={state.success}>
+      <FormFeedback id="report-feedback" error={state.error} success={state.success} signedOut={state.signedOut}>
         {state.error && Object.keys(errors).length > 0 && <p className="mt-0.5">The fields that need attention are marked below each one.</p>}
         {succeeded && !edit && <p className="mt-0.5">{lost ? "Next, check whether anyone has found something similar." : "The owner can now find it in search and claim it."}</p>}
         {succeeded && (

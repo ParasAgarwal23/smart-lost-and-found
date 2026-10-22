@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon } from "@/components/icons";
+import SignInAgain from "@/components/sign-in-again";
 
 // Labelled field wrapper. Hint and error ids are linked to the control by the
 // caller through aria-describedby so screen readers announce them together.
@@ -32,10 +33,12 @@ export function describedBy(id: string, { hint, error }: { hint?: boolean; error
 }
 
 // One polite live region per form announces both validation and success results.
-export function FormFeedback({ id, error, success, children }: {
+// signedOut: the action found no session, so offer a way to sign in again.
+export function FormFeedback({ id, error, success, signedOut = false, children }: {
   id: string;
   error: string | null;
   success: string | null;
+  signedOut?: boolean;
   children?: ReactNode;
 }) {
   const tone = error ? "notice-error" : success ? "notice-success" : "";
@@ -44,7 +47,7 @@ export function FormFeedback({ id, error, success, children }: {
     <div id={id} role="status" aria-live="polite" className={message ? `notice ${tone}` : "feedback"}>
       {message && <>
         <Icon name={error ? "alert" : "checkCircle"} size={20} className="mt-0.5" />
-        <div className="min-w-0"><p className="font-semibold">{message}</p>{children}</div>
+        <div className="min-w-0"><p className="font-semibold">{message}</p>{error && signedOut && <SignInAgain />}{children}</div>
       </>}
     </div>
   );

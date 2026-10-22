@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Icon, type IconName } from "@/components/icons";
+import { SESSION_ENDED_EVENT } from "@/components/sign-in-again";
 
 export type NavUser = { name: string | null; role: "USER" | "ADMIN" } | null;
 
@@ -48,10 +49,16 @@ function ReportMenu() {
   const [openedOn, setOpenedOn] = useState<string | null>(null);
   const open = openedOn !== null && openedOn === pathname;
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpenedOn(null); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // Don't leave keyboard focus inside the menu that is being hidden.
+      if (ref.current?.contains(document.activeElement)) buttonRef.current?.focus();
+      setOpenedOn(null);
+    };
     const onClick = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpenedOn(null); };
     window.addEventListener("keydown", onKey);
     window.addEventListener("mousedown", onClick);
@@ -60,7 +67,7 @@ function ReportMenu() {
 
   return (
     <div ref={ref} className="relative">
-      <button type="button" className="btn btn-accent btn-sm" aria-expanded={open} aria-controls="report-menu"
+      <button ref={buttonRef} type="button" className="btn btn-accent btn-sm" aria-expanded={open} aria-controls="report-menu"
         onClick={() => setOpenedOn(open ? null : pathname)}>
         <Icon name="plus" size={16} />Report an item
       </button>
@@ -78,17 +85,45 @@ function ReportMenu() {
 
 // The role shown here is display-only; every protected page and action
 // re-reads the user from PostgreSQL before authorizing anything.
-export default function SiteNav({ user }: { user: NavUser }) {
+export default function SiteNav({ user: serverUser }: { user: NavUser }) {
   const pathname = usePathname();
+  const router = useRouter();
+  // This header is part of the root layout, which client-side navigations and
+  // failed actions do not re-render. Once an action reports that the session
+  // has ended, show the signed-out header until the server sends a new one.
+  const [endedFor, setEndedFor] = useState<NavUser | undefined>(undefined);
+  const user = endedFor !== undefined && endedFor === serverUser ? null : serverUser;
   // The compact menu (windows narrower than 1280px, including zoomed desktop
   // browsers) remembers the path it was opened on, so navigating closes it.
   const [openedOn, setOpenedOn] = useState<string | null>(null);
   const open = openedOn !== null && openedOn === pathname;
   const items = navItems(user);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const previousPath = useRef(pathname);
+
+  useEffect(() => {
+    const ended = () => setEndedFor(serverUser);
+    window.addEventListener(SESSION_ENDED_EVENT, ended);
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, ended);
+  }, [serverUser]);
+
+  // Reaching Sign In by a client-side navigation (e.g. a protected page
+  // redirected here) while an account is still shown means the session may
+  // have ended elsewhere, so re-render the header from the server once.
+  useEffect(() => {
+    const arrived = previousPath.current !== pathname;
+    previousPath.current = pathname;
+    if (arrived && pathname === "/login" && user) router.refresh();
+  }, [pathname, user, router]);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpenedOn(null); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (menuRef.current?.contains(document.activeElement)) menuButtonRef.current?.focus();
+      setOpenedOn(null);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
@@ -118,12 +153,12 @@ export default function SiteNav({ user }: { user: NavUser }) {
         )}
       </div>
 
-      <button type="button" className="btn btn-secondary btn-sm ml-auto xl:hidden" aria-expanded={open} aria-controls="compact-menu"
+      <button ref={menuButtonRef} type="button" className="btn btn-secondary btn-sm ml-auto xl:hidden" aria-expanded={open} aria-controls="compact-menu"
         onClick={() => setOpenedOn(open ? null : pathname)}>
         <Icon name={open ? "close" : "menu"} size={18} />
         <span className="max-[359px]:sr-only">Menu</span>
       </button>
-      <div id="compact-menu" hidden={!open} className="absolute inset-x-0 top-full border-b border-line bg-surface shadow-lg xl:hidden">
+      <div ref={menuRef} id="compact-menu" hidden={!open} className="absolute inset-x-0 top-full border-b border-line bg-surface shadow-lg xl:hidden">
         <nav aria-label="Menu" className="container-page grid gap-1 py-3">
           {reportLinks.map((link) => (
             <Link key={link.href} href={link.href} className="nav-link min-h-11 text-base">

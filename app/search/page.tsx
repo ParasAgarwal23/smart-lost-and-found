@@ -9,7 +9,7 @@ import ClaimLink from "@/app/claim/claim-link";
 import AutoSubmit from "@/components/auto-submit";
 import ExpandableText from "@/components/expandable-text";
 import { Icon } from "@/components/icons";
-import { EmptyState, formatDate, Notice, placeLabel, ReportTypeBadge } from "@/components/ui";
+import { Badge, EmptyState, formatDate, Notice, placeLabel, ReportTypeBadge } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -154,26 +154,32 @@ export default async function SearchPage({ searchParams }: {
             </div>
           ) : (
             <ul className="mt-4 grid gap-4 md:grid-cols-2">
-              {result.reports.map((report) => (
-                <li key={`${report.Report_Type}-${report.Report_ID}`} className="min-w-0">
-                  <article className={`card report-card h-full ${report.Report_Type === "Lost" ? "rail-lost" : "rail-found"}`}>
-                    <p className="flex flex-wrap items-center gap-2 text-sm text-ink-3">
-                      <ReportTypeBadge type={report.Report_Type} />
-                      <span>{formatDate(report.Report_Date)} · {placeLabel(report.Location_Name, report.Building)}</span>
-                    </p>
-                    <h3 className="text-lg font-bold">{report.Item_Name ?? "Unnamed item"}</h3>
-                    <ExpandableText text={report.Description ?? "No description supplied."} className="text-sm text-ink-2" />
-                    <p className="text-meta text-ink-3"><span className="sr-only">Category: </span>{report.Category_Name ?? "Unnamed category"}</p>
-                    <div className="card-actions">
-                      {report.Report_Type === "Found"
-                        ? <ClaimLink foundId={report.Report_ID} context={contexts.find((context) => context.Found_ID === report.Report_ID)} signedIn={!!user} />
-                        : ownLostIds.has(report.Report_ID)
-                          ? <p className="flex items-start gap-2 text-sm text-ink-2"><Icon name="user" size={16} className="mt-0.5" /><span>You reported this item. <Link href={`/potential-matches?lostId=${report.Report_ID}`} className="link">See possible matches</Link></span></p>
-                          : <Link href="/found-report" className="link-quiet"><Icon name="box" size={16} />Found this? Report it</Link>}
-                    </div>
-                  </article>
-                </li>
-              ))}
+              {result.reports.map((report) => {
+                const context = report.Report_Type === "Found" ? contexts.find((entry) => entry.Found_ID === report.Report_ID) : undefined;
+                // A found item with a recorded handover is no longer available: say so up front.
+                const returned = !!context?.Has_Handover;
+                return (
+                  <li key={`${report.Report_Type}-${report.Report_ID}`} className="min-w-0">
+                    <article className={`card report-card h-full ${report.Report_Type === "Lost" ? "rail-lost" : returned ? "" : "rail-found"}`}>
+                      <p className="flex flex-wrap items-center gap-2 text-sm text-ink-3">
+                        <ReportTypeBadge type={report.Report_Type} />
+                        {returned && <Badge tone="done" icon="gift">Returned</Badge>}
+                        <span>{formatDate(report.Report_Date)} · {placeLabel(report.Location_Name, report.Building)}</span>
+                      </p>
+                      <h3 className="text-lg font-bold">{report.Item_Name ?? "Unnamed item"}</h3>
+                      <ExpandableText text={report.Description ?? "No description supplied."} className="text-sm text-ink-2" />
+                      <p className="text-meta text-ink-3"><span className="sr-only">Category: </span>{report.Category_Name ?? "Unnamed category"}</p>
+                      <div className="card-actions">
+                        {report.Report_Type === "Found"
+                          ? <ClaimLink foundId={report.Report_ID} context={context} signedIn={!!user} />
+                          : ownLostIds.has(report.Report_ID)
+                            ? <p className="flex items-start gap-2 text-sm text-ink-2"><Icon name="user" size={16} className="mt-0.5" /><span>You reported this item. <Link href={`/potential-matches?lostId=${report.Report_ID}`} className="link">See possible matches</Link></span></p>
+                            : <Link href="/found-report" className="link-quiet"><Icon name="box" size={16} />Found this? Report it</Link>}
+                      </div>
+                    </article>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </>}

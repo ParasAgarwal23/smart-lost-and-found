@@ -43,6 +43,8 @@ function loadProduction(relative) {
     if (name === 'server-only') return {};
     // Revalidation requires Next's request runtime; record calls in this runner.
     if (name === 'next/cache') return { revalidatePath: (pathname) => invalidatedPaths.push(pathname) };
+    // Static header rendering has no mounted App Router; keep redirect() and the other exports real.
+    if (name === 'next/navigation') return { ...requireDependency(name), useRouter: () => ({ refresh() {} }) };
     if (name === '@/lib/session') return { readSession: async () => sessions.getStore() ?? null };
     if (name.startsWith('@/')) {
       const target = name.slice(2);
@@ -62,6 +64,7 @@ const { createClaim } = loadProduction('app/actions/claim.ts');
 const { addClaimEvidence } = loadProduction('app/actions/claim-evidence.ts');
 const { withdrawClaim } = loadProduction('app/actions/claim.ts');
 const { editReport } = loadProduction('app/actions/report-edit.ts');
+const { createLostReport } = loadProduction('app/actions/lost-report.ts');
 const tables = ['USER', 'CATEGORY', 'LOCATION', 'LOST_REPORT', 'FOUND_REPORT',
   'FOUND_PHOTOS', 'MATCHES', 'CLAIM', 'CLAIM_EVIDENCE', 'HANDOVER'];
 const id = -randomInt(100000, 1000000000);
@@ -360,6 +363,14 @@ async function workflowBeforeHandover() {
     assert.ok(failedSearch.includes('Unable to load filter options.'));
     assert.ok(!failedSearch.includes('No reports match your search.'));
     assert.ok(!failedSearch.includes('Simulated private database error'));
+    // A failed "Recently found" read is reported as unavailable, never as "nothing reported".
+    database.query = async (sql, values) => {
+      if (sql.includes('FROM public.v_found_report_details f') && sql.includes('LIMIT 4')) throw new Error('Simulated private database error');
+      return originalQuery(sql, values);
+    };
+    const failedHome = await renderPage('app/page.tsx', null);
+    assert.ok(failedHome.includes('be shown right now') && !failedHome.includes('No found items have been reported yet.'));
+    assert.ok(!failedHome.includes('Simulated private database error'));
   } finally { database.query = originalQuery; }
   console.log('PASS polish: safe report/search query failures and recovery links');
   const history = await renderPage('app/claim/page.tsx', users[0], { User_ID: String(users[1]) });
@@ -474,8 +485,22 @@ async function workflowBeforeHandover() {
   for (const user of [users[1], users[2]]) {
     const result = await sessions.run({ User_ID: user }, () => addClaimEvidence({ error: null, success: null }, illegalEvidence));
     assert.ok(result.error);
+    assert.equal(result.signedOut, undefined, 'A foreign claim is not a sign-in problem');
   }
   console.log('PASS Batch 2 I/R: evidence counts, numbering, repeat submissions, reloaded display, and owner-only mutation');
+  // Without a session each action says so explicitly, so its form can offer Sign in again.
+  const report = new FormData();
+  for (const [name, value] of Object.entries({ itemName: 'Unsent', description: 'Unsent', categoryId: id, locationId: id, dateLost: '2026-09-01' })) report.set(name, String(value));
+  for (const result of [
+    await sessions.run(null, () => createLostReport({ error: null, success: null }, report)),
+    await sessions.run(null, () => editReport({ error: null, success: null }, editForm({ kind: 'lost', reportId: id }))),
+    await sessions.run(null, () => createClaim({ error: null, success: null }, data)),
+    await sessions.run(null, () => addClaimEvidence({ error: null, success: null }, illegalEvidence)),
+  ]) {
+    assert.ok(result.error?.startsWith('Please sign in'), result.error);
+    assert.equal(result.signedOut, true);
+  }
+  console.log('PASS signed-out actions: report, edit, claim and evidence report signedOut so the form can offer Sign in again');
   return createdClaimId;
 }
 
@@ -500,6 +525,17 @@ async function workflowAfterHandover(createdClaimId) {
     assert.ok(closedEvidence.includes('this claim is closed') && closedEvidence.includes(`id="evidence-${claimId}"`));
     assert.ok(!closedEvidence.includes('id="description"') && !closedEvidence.includes('type="submit"'));
   }
+  // The action enforces the same rule, so a form left open in another tab cannot add evidence afterwards.
+  for (const [user, claimId] of [[users[0], claims[0]], [users[1], claims[1]]]) {
+    const before = await claimRows(claimId);
+    const late = new FormData();
+    late.set('claimId', String(claimId));
+    late.set('description', 'Late evidence from a stale tab');
+    const result = await sessions.run({ User_ID: user }, () => addClaimEvidence({ error: null, success: null }, late));
+    assert.equal(result.error, 'This item has already been handed over, so this claim is closed and no more evidence can be added.');
+    assert.deepEqual(await claimRows(claimId), before);
+  }
+  console.log('PASS evidence: the action rejects new evidence once the item has been handed over (own receipt or another claimant)');
   const evidencePicker = (await renderPage('app/claim/evidence/page.tsx', users[0])).match(/<select[^>]*id="claimId"[\s\S]*?<\/select>/)?.[0] ?? '';
   assert.ok(evidencePicker.includes(`value="${createdClaimId}"`) && !evidencePicker.includes(`value="${claims[0]}"`), 'Handed-over claims are not offered for new evidence');
   // The owner's own finished claims are explained accurately, never reported as "not found".
@@ -576,6 +612,7 @@ async function withdrawChecks() {
     assert.equal((await withdraw(user, claimId)).error, 'Claim not found or unavailable to your account.');
   }
   assert.equal((await withdraw(null, claimId)).error, 'Please sign in to withdraw a claim.');
+  assert.equal((await withdraw(null, claimId)).signedOut, true);
   assert.ok((await withdraw(users[0], 'not-an-id')).error);
   assert.deepEqual(await claimRows(claimId), { claims: 1, evidence: 2, handovers: 0 });
 
@@ -598,6 +635,29 @@ async function withdrawChecks() {
   const state = await claimRows(raceClaim);
   assert.ok((state.claims === 0 && state.handovers === 0) || (state.claims === 1 && state.handovers === 1), 'Withdrawal and handover must not both apply');
   console.log('PASS withdraw: overlapping withdrawal and handover serialize on the found-report lock');
+}
+
+// Evidence takes the FOUND_REPORT lock before the claim (like handover and
+// withdrawal), so it waits for a competing handover and never lands after it.
+async function evidenceLockChecks() {
+  const item = id - 9;
+  reports.push(item);
+  await pool.query('INSERT INTO public."FOUND_REPORT" ("Found_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name") VALUES ($1, $2, $3, $3, $4)', [item, users[2], id, 'Regression evidence lock item']);
+  const claimId = await claimAs(users[0], item);
+  const evidence = () => {
+    const data = new FormData();
+    data.set('claimId', String(claimId));
+    data.set('description', 'Racing evidence detail');
+    return sessions.run({ User_ID: users[0] }, () => addClaimEvidence({ error: null, success: null }, data));
+  };
+  const [added, receipt] = await overlapping(item, [evidence, () => submit(users[0], claimId)]);
+  assert.equal(receipt.error, null);
+  const state = await claimRows(claimId);
+  assert.equal(state.handovers, 1);
+  assert.ok((added.error === null && state.evidence === 1) ||
+    (added.error === 'This item has already been handed over, so this claim is closed and no more evidence can be added.' && state.evidence === 0),
+  'Evidence is either recorded before the handover or refused after it');
+  console.log('PASS evidence: waits on the found-report lock, so it cannot be added after a competing handover');
 }
 
 function editForm(fields) {
@@ -760,6 +820,7 @@ async function run() {
       const unauthorized = await submit(user, claims[4], 'Test receipt', { User_ID: String(users[0]), userId: String(users[0]) });
       assert.ok(unauthorized.error);
       assert.equal(unauthorized.success, null);
+      assert.equal(unauthorized.signedOut, user === null ? true : undefined);
     }
     const missing = await submit(users[0], id - 100);
     assert.equal(missing.error, 'Claim not found or unavailable to your account.');
@@ -810,6 +871,7 @@ async function run() {
     const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
     assert.ok((await getFoundReportContext(reports, users[0])).every((row) => row.Has_Handover));
     await withdrawChecks();
+    await evidenceLockChecks();
     await editReportChecks();
     if (process.argv.includes('--browser')) {
       const { runBrowserChecks } = await import('./polish-browser.mjs');

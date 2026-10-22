@@ -101,6 +101,12 @@ export async function runBrowserChecks({ users, id, pool }) {
       })()`), `Home subtitle leaves its last word alone at ${width}px`);
     }
     await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    // Escape closes the report menu and returns keyboard focus to its button.
+    await evaluate(`document.querySelector('[aria-controls="report-menu"]').click()`);
+    await until(`!document.getElementById('report-menu').hidden`, 'Report menu must open');
+    await evaluate(`document.querySelector('#report-menu a').focus()`);
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(`document.getElementById('report-menu').hidden && document.activeElement === document.querySelector('[aria-controls="report-menu"]')`, 'Escape must return focus to the Report an item button');
     await visit('/login');
     await fill('email', `absent-${-id}@example.invalid`);
     await fill('password', 'invalid-test-value');
@@ -146,6 +152,12 @@ export async function runBrowserChecks({ users, id, pool }) {
     await fill('password', password);
     await evaluate(`${formOf('password')}.querySelector('button[type=submit]').click()`);
     await until(`location.origin === ${JSON.stringify(base)} && location.pathname === '/'`, 'An external next value must be ignored');
+    // A session that ends elsewhere: the header (root layout) refreshes when a redirect lands on Sign In.
+    await session(users[0]);
+    await visit('/my-reports');
+    await call('Network.deleteCookies', { name: 'smart_lost_found_session', url: base });
+    await evaluate(`document.querySelector('header a[href="/claim"]').click()`);
+    await until(`location.pathname === '/login' && !document.querySelector('header').textContent.includes('Sign Out')`, 'Header must stop showing the account once a redirect lands on Sign In');
     console.log('PASS browser: sign-in explains why it is needed, returns to the requested page, and ignores external redirects');
     await session(users[2]);
     await visit('/');
@@ -198,8 +210,12 @@ export async function runBrowserChecks({ users, id, pool }) {
       await session(null);
       await submit('Please sign in');
       assert.equal(await valueOf('itemName'), name);
+      // The ended session comes with a way back that keeps this draft, and the header stops showing the account.
+      assert.ok(await evaluate(`(() => { const link = [...document.querySelectorAll('#report-feedback a')].find(a => a.textContent.includes('Sign in again')); return link?.target === '_blank' && link.getAttribute('href') === '/login?next=' + encodeURIComponent('/${kind}-report'); })()`), 'A signed-out failure must offer Sign in again in a new tab');
+      await until(`!document.querySelector('header').textContent.includes('Sign Out')`, 'Header must show the signed-out state after the session ends');
       await session(userId);
       await submit('report submitted successfully.');
+      await until(`document.querySelector('header').textContent.includes('Sign Out')`, 'Header must show the account again after a successful submission');
       for (const field of ['itemName', 'description', 'categoryId', 'locationId', date]) assert.equal(await valueOf(field), '');
       const key = kind === 'lost' ? 'Lost_ID' : 'Found_ID';
       const rows = (await pool.query(`SELECT "${key}" AS id, public.vector_dims("Embedding") AS dimensions FROM public."${kind.toUpperCase()}_REPORT" WHERE "User_ID"=$1 AND "Item_Name"=$2`, [userId, name])).rows;
@@ -287,6 +303,7 @@ export async function runBrowserChecks({ users, id, pool }) {
     const withdrawClaimId = (await pool.query('SELECT "Claim_ID" FROM public."CLAIM" WHERE "Found_ID" = $1', [withdrawFound])).rows[0].Claim_ID;
     await evaluate(`[...document.querySelectorAll('#claim-${withdrawClaimId} button')].find((button) => button.textContent === 'Withdraw claim').click()`);
     await until(`!!document.querySelector('#claim-${withdrawClaimId} input[name=claimId]')`, 'Withdraw must ask for confirmation first');
+    assert.ok(await evaluate(`!!document.activeElement.closest('#claim-${withdrawClaimId}')`), 'Opening the confirmation must keep focus in the claim card');
     assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."CLAIM" WHERE "Claim_ID" = $1', [withdrawClaimId])).rows[0].count, 1, 'Opening the confirmation must not delete anything');
     await evaluate(`document.querySelector('#claim-${withdrawClaimId} button[type=submit]').click()`);
     await until(`!document.querySelector('#claim-${withdrawClaimId}') && [...document.querySelectorAll('main [role=status]')].some((region) => region.textContent.includes('Claim withdrawn.'))`, 'Withdrawn claim must disappear with a visible confirmation');

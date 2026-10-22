@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 
-export type HandoverState = { error: string | null; success: string | null };
+export type HandoverState = { error: string | null; success: string | null; signedOut?: boolean };
 
 const handoverSchema = z.object({
   claimId: z.string().regex(/^-?\d+$/).transform(Number)
@@ -29,7 +29,7 @@ export async function createHandover(
 ): Promise<HandoverState> {
   try {
     const user = await getAuthenticatedUser();
-    if (!user) return { error: "Please sign in to confirm receipt.", success: null };
+    if (!user) return { error: "Please sign in to confirm receipt.", success: null, signedOut: true };
 
     const parsed = handoverSchema.safeParse({
       claimId: formData.get("claimId"),
