@@ -55,11 +55,7 @@ export default async function ClaimPage({ searchParams }: {
               f."Location_Name", f."Building", c."Claim_Date"::text AS "Claim_Date",
               summary."Evidence_Count"::text AS "Evidence_Count", summary."Handover_ID",
               h."Handover_Date"::text AS "Handover_Date",
-              EXISTS (
-                SELECT 1 FROM public."CLAIM" handed_claim
-                JOIN public."HANDOVER" receipt ON receipt."Claim_ID" = handed_claim."Claim_ID"
-                WHERE handed_claim."Found_ID" = c."Found_ID"
-              ) AS "Item_Handed_Over"
+              public.found_report_has_handover(c."Found_ID") AS "Item_Handed_Over"
        FROM public."CLAIM" c
        JOIN public.v_found_report_details f ON f."Found_ID" = c."Found_ID"
        CROSS JOIN LATERAL public.get_claim_summary(c."Claim_ID") summary
@@ -78,11 +74,7 @@ export default async function ClaimPage({ searchParams }: {
               f."Building", f."Date_Found"::text AS "Date_Found"
        FROM public.v_found_report_details f
        WHERE f."User_ID" <> $1
-         AND NOT EXISTS (
-           SELECT 1 FROM public."CLAIM" c
-           JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
-           WHERE c."Found_ID" = f."Found_ID"
-         )
+         AND NOT public.found_report_has_handover(f."Found_ID")
          AND NOT EXISTS (
            SELECT 1 FROM public."CLAIM" c
            WHERE c."Found_ID" = f."Found_ID" AND c."User_ID" = $1

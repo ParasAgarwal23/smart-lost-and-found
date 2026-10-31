@@ -47,11 +47,7 @@ export async function addClaimEvidence(
 
       // Lock the parent, including when it has no evidence, before allocating its partial key.
       const claim = await client.query<{ handed_over: boolean }>(
-        `SELECT EXISTS (
-           SELECT 1 FROM public."CLAIM" AS other
-           JOIN public."HANDOVER" AS h ON h."Claim_ID" = other."Claim_ID"
-           WHERE other."Found_ID" = c."Found_ID"
-         ) AS handed_over
+        `SELECT public.found_report_has_handover(c."Found_ID") AS handed_over
          FROM public."CLAIM" AS c
          WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE`,
         [claimId, user.User_ID],

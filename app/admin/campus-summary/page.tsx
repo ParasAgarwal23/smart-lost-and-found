@@ -3,9 +3,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { loginPath } from "@/lib/next-path";
 import { AuthorizationError, requireRole } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { adminQuery } from "@/lib/admin-db";
 import { Icon, type IconName } from "@/components/icons";
-import { DateText, EmptyState, Notice, PageHeader, ReportTypeBadge } from "@/components/ui";
+import { Badge, DateText, EmptyState, formatDate, Notice, PageHeader, ReportTypeBadge } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +13,9 @@ export const metadata: Metadata = { title: "Campus Summary" };
 
 type ReportGroup = { id: number; label: string | null; building: string | null; lost: string; found: string; total: string };
 type RecentReport = { id: number; type: string; item: string | null; category: string | null; location: string | null; building: string | null; date: string | null };
+type DailyRow = { day: string; lost: number; found: number; claims: number; handovers: number };
+type Hotspot = { id: number; label: string | null; building: string | null; lost: string; found: string; total: string; campus_average: string };
+type Contested = { id: number; item: string | null; location: string | null; building: string | null; claims: string; claimants: string; first_claim: string | null; latest_claim: string | null; resolved: boolean };
 
 const format = (value: string) => BigInt(value).toLocaleString("en-US");
 
@@ -60,6 +63,61 @@ function ReportBreakdown({ title, groups, dimension }: { title: string; groups: 
   );
 }
 
+const SERIES = [
+  { key: "lost", label: "Lost", tone: "bg-lost" },
+  { key: "found", label: "Found", tone: "bg-brand" },
+  { key: "claims", label: "Claims", tone: "bg-claim" },
+  { key: "handovers", label: "Handovers", tone: "bg-accent" },
+] as const;
+
+// One stacked column per calendar day from admin_daily_activity (a recursive
+// CTE), so quiet days are visible as gaps rather than silently skipped.
+function DailyActivity({ rows, days }: { rows: DailyRow[]; days: number }) {
+  const sum = (row: DailyRow) => row.lost + row.found + row.claims + row.handovers;
+  const max = Math.max(1, ...rows.map(sum));
+  const quiet = rows.filter((row) => sum(row) === 0).length;
+  const totals = SERIES.map((series) => ({ ...series, total: rows.reduce((acc, row) => acc + row[series.key], 0) }));
+  return (
+    <>
+      <p className="mt-1 text-sm text-ink-2">
+        {totals.map((series) => `${series.total.toLocaleString("en-US")} ${series.label.toLowerCase()}`).join(" · ")} in the last {days} days
+        {" · "}<span className="font-semibold">{quiet} quiet {quiet === 1 ? "day" : "days"}</span> with no activity
+      </p>
+      <div role="img" aria-label={`Daily activity for the last ${days} days. ${quiet} days had no activity. The table below lists every day.`}
+        className="mt-5 flex h-36 items-end gap-px border-b border-line">
+        {rows.map((row) => (
+          <div key={row.day} title={`${formatDate(row.day)}: ${row.lost} lost, ${row.found} found, ${row.claims} claims, ${row.handovers} handovers`}
+            className="flex h-full min-w-0 flex-1 flex-col justify-end">
+            {SERIES.map((series) => row[series.key] > 0 && (
+              <span key={series.key} className={`${series.tone} block w-full first:rounded-t-sm`} style={{ height: `${(row[series.key] / max) * 100}%` }} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex justify-between text-meta text-ink-3" aria-hidden="true">
+        <span>{formatDate(rows[0]?.day)}</span><span>{formatDate(rows.at(-1)?.day)}</span>
+      </div>
+      <p className="mt-3 flex flex-wrap gap-3 text-meta font-semibold text-ink-2" aria-hidden="true">
+        {SERIES.map((series) => <span key={series.key} className="flex items-center gap-1.5"><span className={`size-2.5 rounded-sm ${series.tone}`} />{series.label}</span>)}
+      </p>
+      <details className="mt-4">
+        <summary className="w-fit cursor-pointer text-sm font-bold text-brand">View as table</summary>
+        <div role="region" aria-label="Daily activity table" tabIndex={0} className="mt-3 max-h-80 overflow-auto rounded-lg">
+          <table aria-label="Daily activity" className="data-table min-w-[28rem]">
+            <thead><tr><th scope="col">Date</th>{SERIES.map((series) => <th key={series.key} scope="col" className="num">{series.label}</th>)}</tr></thead>
+            <tbody>{rows.map((row) => (
+              <tr key={row.day} data-day={row.day}>
+                <th scope="row" className="text-left font-normal tabular-nums"><DateText value={row.day} /></th>
+                {SERIES.map((series) => <td key={series.key} className={`num ${row[series.key] === 0 ? "text-ink-3" : "font-semibold"}`}>{row[series.key]}</td>)}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </details>
+    </>
+  );
+}
+
 // Icon, colour and source table for each total (the note becomes a tooltip).
 const statMeta: Record<string, { icon: IconName; tone: string; note: string }> = {
   "Total lost reports": { icon: "question", tone: "bg-lost-soft text-lost", note: "LOST_REPORT rows" },
@@ -68,7 +126,10 @@ const statMeta: Record<string, { icon: IconName; tone: string; note: string }> =
   "Total handovers": { icon: "gift", tone: "bg-accent-soft text-accent-ink", note: "HANDOVER rows" },
 };
 
-export default async function CampusSummaryPage() {
+export default async function CampusSummaryPage({ searchParams }: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const days = (await searchParams)?.days === "90" ? 90 : 30;
   // Authorize before any aggregate query; the navigation link is not a guard.
   try {
     await requireRole("ADMIN");
@@ -86,21 +147,20 @@ export default async function CampusSummaryPage() {
     );
   }
 
+  // Every read below uses adminQuery: the read-only lf_admin_web login, which
+  // can see only the admin_* objects (db/admin_reports.sql) and report views.
   let counts: { label: string; value: string }[] = [];
   let error: string | null = null;
   try {
-    // Independent counts avoid multiplying records through one-to-many joins.
-    const [lost, found, claims, handovers] = await Promise.all([
-      query<{ count: string }>('SELECT COUNT(*)::text AS count FROM public."LOST_REPORT"'),
-      query<{ count: string }>('SELECT COUNT(*)::text AS count FROM public."FOUND_REPORT"'),
-      query<{ count: string }>('SELECT COUNT(*)::text AS count FROM public."CLAIM"'),
-      query<{ count: string }>('SELECT COUNT(*)::text AS count FROM public."HANDOVER"'),
-    ]);
+    // Independent counts (scalar subqueries) avoid multiplying one-to-many joins.
+    const totals = (await adminQuery<{ lost: string; found: string; claims: string; handovers: string }>(
+      `SELECT lost_reports::text AS lost, found_reports::text AS found, claims::text AS claims, handovers::text AS handovers
+       FROM public.admin_campus_totals`)).rows[0];
     counts = [
-      { label: "Total lost reports", value: lost.rows[0].count },
-      { label: "Total found reports", value: found.rows[0].count },
-      { label: "Total claims", value: claims.rows[0].count },
-      { label: "Total handovers", value: handovers.rows[0].count },
+      { label: "Total lost reports", value: totals.lost },
+      { label: "Total found reports", value: totals.found },
+      { label: "Total claims", value: totals.claims },
+      { label: "Total handovers", value: totals.handovers },
     ];
   } catch {
     error = "Unable to load campus totals. Please try again.";
@@ -111,32 +171,16 @@ export default async function CampusSummaryPage() {
   let recent: RecentReport[] = [];
   let insightsError: string | null = null;
   try {
-    // UNION ALL creates one row per report before grouping; never join the
-    // two report tables together, which would multiply their counts.
+    // The category/location views group a UNION ALL CTE (one row per report),
+    // so the two report tables are never joined to each other.
     const [categoryResult, locationResult, recentResult] = await Promise.all([
-      query<ReportGroup>(`WITH reports AS (
-        SELECT "Category_ID" AS group_id, 'Lost' AS type FROM public."LOST_REPORT"
-        UNION ALL SELECT "Category_ID", 'Found' FROM public."FOUND_REPORT"
-      )
-      SELECT c."Category_ID" AS id, c."Category_Name" AS label, NULL::text AS building,
-             COUNT(*) FILTER (WHERE r.type = 'Lost')::text AS lost,
-             COUNT(*) FILTER (WHERE r.type = 'Found')::text AS found,
-             COUNT(r.group_id)::text AS total
-      FROM public."CATEGORY" c LEFT JOIN reports r ON r.group_id = c."Category_ID"
-      GROUP BY c."Category_ID", c."Category_Name"
-      ORDER BY COUNT(r.group_id) DESC, c."Category_Name" NULLS LAST, c."Category_ID"`),
-      query<ReportGroup>(`WITH reports AS (
-        SELECT "Location_ID" AS group_id, 'Lost' AS type FROM public."LOST_REPORT"
-        UNION ALL SELECT "Location_ID", 'Found' FROM public."FOUND_REPORT"
-      )
-      SELECT l."Location_ID" AS id, l."Location_Name" AS label, l."Building" AS building,
-             COUNT(*) FILTER (WHERE r.type = 'Lost')::text AS lost,
-             COUNT(*) FILTER (WHERE r.type = 'Found')::text AS found,
-             COUNT(r.group_id)::text AS total
-      FROM public."LOCATION" l LEFT JOIN reports r ON r.group_id = l."Location_ID"
-      GROUP BY l."Location_ID", l."Location_Name", l."Building"
-      ORDER BY COUNT(r.group_id) DESC, l."Location_Name" NULLS LAST, l."Location_ID"`),
-      query<RecentReport>(`WITH reports AS (
+      adminQuery<ReportGroup>(`SELECT id, label, building, lost::text AS lost, found::text AS found, total::text AS total
+      FROM public.admin_reports_by_category
+      ORDER BY total DESC, label NULLS LAST, id`),
+      adminQuery<ReportGroup>(`SELECT id, label, building, lost::text AS lost, found::text AS found, total::text AS total
+      FROM public.admin_reports_by_location
+      ORDER BY total DESC, label NULLS LAST, id`),
+      adminQuery<RecentReport>(`WITH reports AS (
         SELECT "Lost_ID" AS id, 'Lost' AS type, "Item_Name" AS item,
                "Category_Name" AS category, "Location_Name" AS location, "Building" AS building, "Date_Lost" AS report_date
         FROM public.v_lost_report_details
@@ -152,6 +196,32 @@ export default async function CampusSummaryPage() {
     recent = recentResult.rows;
   } catch {
     insightsError = "Unable to load campus insights and recent activity. Please try again.";
+  }
+
+  let daily: DailyRow[] = [];
+  let hotspots: Hotspot[] = [];
+  let contested: Contested[] = [];
+  let analyticsError: string | null = null;
+  try {
+    const [dailyResult, hotspotResult, contestedResult] = await Promise.all([
+      // Recursive CTE: a continuous calendar of the last `days` days, quiet days included.
+      adminQuery<DailyRow>(`SELECT day::text AS day, lost_reports::int AS lost, found_reports::int AS found,
+               claims::int AS claims, handovers::int AS handovers
+        FROM public.admin_daily_activity($1)`, [days]),
+      // HAVING with a nested subquery: locations above the campus average.
+      adminQuery<Hotspot>(`SELECT id, label, building, lost::text AS lost, found::text AS found, total::text AS total,
+               campus_average::text AS campus_average
+        FROM public.admin_location_hotspots ORDER BY total DESC, label NULLS LAST, id`),
+      // HAVING COUNT(DISTINCT claimant) >= 2: items with competing claims, open ones first.
+      adminQuery<Contested>(`SELECT id, item, location, building, claims::text AS claims, claimants::text AS claimants,
+               first_claim::text AS first_claim, latest_claim::text AS latest_claim, resolved
+        FROM public.admin_contested_items ORDER BY resolved, claimants DESC, latest_claim DESC NULLS LAST, id`),
+    ]);
+    daily = dailyResult.rows;
+    hotspots = hotspotResult.rows;
+    contested = contestedResult.rows;
+  } catch {
+    analyticsError = "Unable to load the activity timeline, hotspots and contested items. Please try again.";
   }
 
   // Each found report can have at most one handover (enforced by the handover
@@ -196,6 +266,61 @@ export default async function CampusSummaryPage() {
           </div>
         )}
       </section>
+      <section aria-labelledby="daily-heading" className="card card-pad mt-8">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h2 id="daily-heading" className="section-title">Daily Activity</h2>
+          <nav aria-label="Timeline length" className="segmented">
+            {[30, 90].map((option) => (
+              <a key={option} href={`/admin/campus-summary?days=${option}`} aria-current={days === option ? "page" : undefined}
+                className={`flex min-h-10 items-center justify-center rounded-[0.55rem] px-3 text-sm font-semibold ${days === option ? "bg-surface text-ink shadow-sm" : "text-ink-2"}`}>Last {option} days</a>
+            ))}
+          </nav>
+        </div>
+        {analyticsError
+          ? <Notice tone="error" className="mt-5" action={<a href="/admin/campus-summary" className="btn btn-secondary btn-sm">Try again</a>}>{analyticsError}</Notice>
+          : <DailyActivity rows={daily} days={days} />}
+      </section>
+      {!analyticsError && (
+        <div className="mt-8 grid items-start gap-5 xl:grid-cols-2">
+          <section aria-labelledby="hotspots-heading" className="card card-pad min-w-0">
+            <h2 id="hotspots-heading" className="section-title">Location Hotspots</h2>
+            <p className="mt-1 text-sm text-ink-3">Places with more lost and found reports than the campus average{hotspots[0] ? ` (${Number(hotspots[0].campus_average).toLocaleString("en-US")} per location)` : ""}.</p>
+            {hotspots.length === 0 ? <p className="mt-5 text-ink-2">No location is above the campus average.</p> : (
+              <table aria-label="Location Hotspots" className="data-table mt-5 table-fixed">
+                <thead><tr><th scope="col" className="w-[52%]">Location</th><th scope="col" className="num">Lost</th><th scope="col" className="num">Found</th><th scope="col" className="num">Total</th></tr></thead>
+                <tbody>{hotspots.map((spot) => (
+                  <tr key={spot.id} data-hotspot-id={spot.id}>
+                    <th scope="row" className="text-left font-semibold">{spot.label ?? "Unnamed location"}{spot.building && <span className="block text-meta font-normal text-ink-3">{spot.building}</span>}</th>
+                    <td className="num text-lost-ink">{format(spot.lost)}</td>
+                    <td className="num text-brand-ink">{format(spot.found)}</td>
+                    <td className="num font-bold">{format(spot.total)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </section>
+          <section aria-labelledby="contested-heading" className="card card-pad min-w-0">
+            <h2 id="contested-heading" className="section-title">Contested Items</h2>
+            <p className="mt-1 text-sm text-ink-3">Found items claimed by two or more people. Claimants stay private.</p>
+            {contested.length === 0 ? <p className="mt-5 text-ink-2">No found item has competing claims.</p> : (
+              <ul className="mt-5 grid gap-3">
+                {contested.map((item) => (
+                  <li key={item.id} data-contested-id={item.id} className="rounded-xl border border-line p-3">
+                    <p className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold">{item.item ?? "Unnamed item"}</span>
+                      {item.resolved ? <Badge tone="done" icon="gift">Handed over</Badge> : <Badge tone="claim" icon="clipboard">Open</Badge>}
+                    </p>
+                    <p className="mt-1 text-sm text-ink-2">
+                      {format(item.claimants)} claimants · {format(item.claims)} claims · {item.location ?? "Unnamed location"}
+                      {item.latest_claim && <> · latest claim <DateText value={item.latest_claim} /></>}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
       {!insightsError && <section aria-labelledby="activity-heading" className="card card-pad mt-8">
         <h2 id="activity-heading" className="section-title">Recent Campus Activity</h2>
         <p className="mt-1 text-sm text-ink-3">The 10 most recent reports, by the date the item was lost or found.</p>

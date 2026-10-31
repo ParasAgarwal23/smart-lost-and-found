@@ -5,6 +5,8 @@
 // unchanged since it was read. Updating "Embedding" alone does not fire the
 // invalidate_report_embedding trigger (it watches Item_Name/Description only).
 // Model settings must match lib/embedding.ts exactly so vectors are comparable.
+// Uses MAINTENANCE_DATABASE_URL (the table owner): it updates every user's
+// reports, which the RLS-restricted web login correctly cannot do.
 import nextEnv from '@next/env';
 import pg from 'pg';
 import { pipeline } from '@huggingface/transformers';
@@ -14,7 +16,11 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 nextEnv.loadEnvConfig(root);
 const dryRun = process.argv.includes('--dry-run');
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+if (!process.env.MAINTENANCE_DATABASE_URL) {
+  console.error('FAIL: MAINTENANCE_DATABASE_URL must be set (owner connection).');
+  process.exit(1);
+}
+const pool = new pg.Pool({ connectionString: process.env.MAINTENANCE_DATABASE_URL });
 
 const tables = [
   { table: 'LOST_REPORT', id: 'Lost_ID' },
@@ -23,7 +29,7 @@ const tables = [
 
 try {
   const { rows: [target] } = await pool.query('SELECT current_database() AS db');
-  if (target.db !== 'smart_lost_found') throw new Error('Connect to smart_lost_found before running this script.');
+  if (!/^smart_lost_found(_test|_demo)?$/.test(target.db)) throw new Error('Connect to smart_lost_found, smart_lost_found_test or smart_lost_found_demo.');
 
   const pending = [];
   for (const { table, id } of tables) {

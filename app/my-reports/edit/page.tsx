@@ -42,8 +42,7 @@ export default async function EditReportPage({ searchParams }: {
            FROM public."LOST_REPORT" WHERE "Lost_ID" = $1 AND "User_ID" = $2`, [reportId, user.User_ID])
         : await query<EditableReport>(
           `SELECT f."Item_Name", f."Description", f."Category_ID", f."Location_ID", f."Date_Found"::text AS date,
-                  EXISTS (SELECT 1 FROM public."CLAIM" c JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
-                          WHERE c."Found_ID" = f."Found_ID") AS "Has_Handover"
+                  public.found_report_has_handover(f."Found_ID") AS "Has_Handover"
            FROM public."FOUND_REPORT" f WHERE f."Found_ID" = $1 AND f."User_ID" = $2`, [reportId, user.User_ID]);
       report = result.rows[0];
     } catch {

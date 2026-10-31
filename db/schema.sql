@@ -4,13 +4,17 @@
 -- Revision 2026-10-16: named CHECK/UNIQUE integrity constraints were added
 -- (see "Integrity constraints" in db/README.md). Existing databases receive
 -- them through db/constraints.sql.
+-- Revision 2026-10-31: email format/normalisation CHECKs (db/constraints.sql),
+-- ON DELETE CASCADE for MATCHES and FOUND_PHOTOS, and CURRENT_DATE defaults for
+-- claim/handover dates (db/referential_actions.sql). Run db/vector_setup.sql first.
 
 BEGIN;
 
 DO $$
 BEGIN
-    IF current_database() <> 'smart_lost_found' THEN
-        RAISE EXCEPTION 'Connect to smart_lost_found before running this script';
+    -- Allowlist: the real database, the isolated test clone and the demo database.
+    IF current_database() !~ '^smart_lost_found(_test|_demo)?$' THEN
+        RAISE EXCEPTION 'Connect to smart_lost_found, smart_lost_found_test or smart_lost_found_demo before running this script';
     END IF;
     IF current_setting('server_version_num')::integer / 10000 <> 18 THEN
         RAISE EXCEPTION 'PostgreSQL 18 is required';
@@ -32,7 +36,11 @@ CREATE TABLE public."USER" (
     "Role" VARCHAR(20),
     "Password_Hash" VARCHAR(255) NOT NULL,
     CONSTRAINT "USER_Role_check" CHECK ("Role" IN ('USER', 'ADMIN')),
-    CONSTRAINT "USER_Email_key" UNIQUE ("Email")
+    CONSTRAINT "USER_Email_key" UNIQUE ("Email"),
+    -- Basic shape only (one @, no spaces, a dot in the domain); not full RFC 5322 validation.
+    CONSTRAINT "USER_Email_format_check" CHECK ("Email" ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'),
+    -- Stored lower-case and trimmed, so USER_Email_key also rejects case variants.
+    CONSTRAINT "USER_Email_lowercase_check" CHECK ("Email" = lower(btrim("Email")))
 );
 
 CREATE TABLE public."CATEGORY" (
@@ -73,14 +81,16 @@ CREATE TABLE public."FOUND_REPORT" (
 );
 
 CREATE TABLE public."FOUND_PHOTOS" (
-    "Found_ID" INT REFERENCES public."FOUND_REPORT" ("Found_ID"),
+    -- Photos are a multivalued attribute of the found report: they go with it.
+    "Found_ID" INT REFERENCES public."FOUND_REPORT" ("Found_ID") ON DELETE CASCADE,
     "Photo_URL" VARCHAR(255),
     PRIMARY KEY ("Found_ID", "Photo_URL")
 );
 
 CREATE TABLE public."MATCHES" (
-    "Lost_ID" INT REFERENCES public."LOST_REPORT" ("Lost_ID"),
-    "Found_ID" INT REFERENCES public."FOUND_REPORT" ("Found_ID"),
+    -- A match is a derived association: it is removed with either report.
+    "Lost_ID" INT REFERENCES public."LOST_REPORT" ("Lost_ID") ON DELETE CASCADE,
+    "Found_ID" INT REFERENCES public."FOUND_REPORT" ("Found_ID") ON DELETE CASCADE,
     "Match_Score" DECIMAL(5,2),
     "Match_Status" VARCHAR(20),
     "Match_Date" DATE,
@@ -90,8 +100,9 @@ CREATE TABLE public."MATCHES" (
 CREATE TABLE public."CLAIM" (
     "Claim_ID" INT PRIMARY KEY,
     "User_ID" INT NOT NULL REFERENCES public."USER" ("User_ID"),
+    -- NO ACTION (default): a found report with claims cannot be deleted.
     "Found_ID" INT NOT NULL REFERENCES public."FOUND_REPORT" ("Found_ID"),
-    "Claim_Date" DATE,
+    "Claim_Date" DATE DEFAULT CURRENT_DATE,
     "Status" VARCHAR(20),
     CONSTRAINT "CLAIM_User_ID_Found_ID_key" UNIQUE ("User_ID", "Found_ID")
 );
@@ -99,7 +110,7 @@ CREATE TABLE public."CLAIM" (
 CREATE TABLE public."HANDOVER" (
     "Handover_ID" INT PRIMARY KEY,
     "Claim_ID" INT NOT NULL UNIQUE REFERENCES public."CLAIM" ("Claim_ID"),
-    "Handover_Date" DATE,
+    "Handover_Date" DATE DEFAULT CURRENT_DATE,
     "Signature" VARCHAR(100)
 );
 

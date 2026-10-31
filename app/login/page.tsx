@@ -16,7 +16,9 @@ const benefits: { icon: IconName; text: string }[] = [
 export default async function LoginPage({ searchParams }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const next = safeNextPath((await searchParams)?.next);
+  const params = await searchParams;
+  const next = safeNextPath(params?.next);
+  const registered = params?.registered === "1";
   const purpose = nextPurpose(next);
 
   return (
@@ -38,9 +40,10 @@ export default async function LoginPage({ searchParams }: {
         <section className="p-6 sm:p-10">
           <h1 className="page-title">Sign In</h1>
           <p className="mt-2 text-ink-2">Anyone can search. You need an account to report, claim or track items.</p>
+          {registered && <p role="status" className="notice notice-success mt-5"><Icon name="checkCircle" size={18} className="mt-0.5" />Your account has been created. Sign in with your email and password.</p>}
           {purpose && <p className="notice notice-info mt-5"><Icon name="info" size={18} className="mt-0.5" />{purpose}</p>}
           <LoginForm next={next} />
-          <p className="mt-6 text-sm text-ink-3">No account? Accounts are created by the campus administrator.</p>
+          <p className="mt-6 text-sm text-ink-2">New here? <Link href="/register" className="link">Create an account</Link></p>
           <Link href="/" className="link-quiet mt-1"><Icon name="arrowLeft" size={16} />Back to Home</Link>
         </section>
       </div>

@@ -4,10 +4,10 @@ import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transform
 
 let extractorPromise: Promise<FeatureExtractionPipeline> | undefined;
 
-export async function generateEmbedding(
-  itemName: string,
-  description: string,
-): Promise<number[]> {
+// The one embedding pipeline: all-MiniLM-L6-v2, mean pooling, normalised, 384
+// values. Reports (generateEmbedding) and search text (semantic search) both
+// use it, so their vectors are directly comparable.
+export async function embedText(text: string): Promise<number[]> {
   // Share model initialization across calls, including concurrent requests.
   extractorPromise ??= pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
     device: "cpu",
@@ -18,7 +18,7 @@ export async function generateEmbedding(
   });
 
   const extractor = await extractorPromise;
-  const output = await extractor(`${itemName.trim()}\n${description.trim()}`, {
+  const output = await extractor(text, {
     pooling: "mean",
     normalize: true,
   });
@@ -27,4 +27,11 @@ export async function generateEmbedding(
     throw new Error("Expected an embedding with 384 finite values.");
   }
   return embedding;
+}
+
+export async function generateEmbedding(
+  itemName: string,
+  description: string,
+): Promise<number[]> {
+  return embedText(`${itemName.trim()}\n${description.trim()}`);
 }

@@ -183,6 +183,12 @@ export async function runBrowserChecks({ users, id, pool }) {
       ORDER BY date DESC NULLS LAST, id DESC, type ASC LIMIT $1`, [10])).rows;
     assert.deepEqual(await evaluate(`Array.from(document.querySelector('table[aria-label="Recent Campus Activity"]').tBodies[0].rows).map(row => ({ id: Number(row.dataset.reportId), type: row.dataset.reportType, item: row.cells[0].textContent, date: row.cells[4].querySelector('time')?.dateTime ?? null }))`), expectedActivity.map(row => ({...row, item: row.item ?? 'Unnamed item'})));
     console.log('PASS browser: category/location tables and recent activity agree with independent PostgreSQL queries');
+    // Recursive-CTE timeline: one row per calendar day, and the 90-day view.
+    assert.equal(await evaluate(`document.querySelectorAll('table[aria-label="Daily activity"] tr[data-day]').length`), 30);
+    assert.ok(await evaluate(`!!document.querySelector('table[aria-label="Location Hotspots"]') && document.body.textContent.includes('Contested Items')`));
+    await evaluate(`document.querySelector('nav[aria-label="Timeline length"] a[href$="days=90"]').click()`);
+    await until(`location.search === '?days=90' && document.querySelectorAll('table[aria-label="Daily activity"] tr[data-day]').length === 90`, 'The 90-day timeline must load');
+    console.log('PASS browser: daily activity shows every day (30 and 90), with hotspots and contested items');
     // Desktop widths, plus 320px = a 1280px window at 400% zoom (WCAG 1.4.10 reflow).
     for (const width of [320, 1024, 1280, 1440]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -309,6 +315,52 @@ export async function runBrowserChecks({ users, id, pool }) {
     await until(`!document.querySelector('#claim-${withdrawClaimId}') && [...document.querySelectorAll('main [role=status]')].some((region) => region.textContent.includes('Claim withdrawn.'))`, 'Withdrawn claim must disappear with a visible confirmation');
     assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."CLAIM" WHERE "Claim_ID" = $1', [withdrawClaimId])).rows[0].count, 0);
     console.log('PASS browser: withdrawal needs confirmation, deletes the claim, removes its card and announces the result');
+
+    // Report deletion (stored procedure delete_own_report) needs confirmation too.
+    const deleteLost = id - 7;
+    await pool.query(`INSERT INTO public."LOST_REPORT" ("Lost_ID", "User_ID", "Category_ID", "Location_ID", "Item_Name", "Description")
+      VALUES ($1, $2, $3, $3, 'Browser delete item', 'Temporary report for the delete journey')`, [deleteLost, users[0], id]);
+    await visit('/my-reports');
+    await evaluate(`[...document.querySelectorAll('main button')].find((button) => button.textContent === 'Delete Browser delete item').click()`);
+    await until(`!!document.querySelector('main input[name=reportId][value="${deleteLost}"]')`, 'Delete must ask for confirmation first');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."LOST_REPORT" WHERE "Lost_ID" = $1', [deleteLost])).rows[0].count, 1, 'Opening the confirmation must not delete anything');
+    await evaluate(`document.querySelector('main input[name=reportId][value="${deleteLost}"]').form.querySelector('button[type=submit]').click()`);
+    await until(`location.search === '?deleted=lost' && document.body.textContent.includes('Your lost report was deleted')`, 'Deleting must return to My Reports with a confirmation', 30000);
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM public."LOST_REPORT" WHERE "Lost_ID" = $1', [deleteLost])).rows[0].count, 0);
+    console.log('PASS browser: report deletion needs confirmation, removes the report and its vector, and announces the result');
+
+    // Similar-meaning search uses real embeddings in the browser as well.
+    await visit('/search?mode=meaning&text=lost%20phone%20with%20a%20blue%20cover&type=Found');
+    assert.ok(await evaluate(`document.querySelector('input[name=mode][value=meaning]').checked && document.body.textContent.includes('% similar')`), 'Meaning mode must show ranked results');
+    console.log('PASS browser: similar-meaning search returns ranked results with a similarity badge');
+
+    // Public registration through the real form, then sign in with the new account.
+    await session(null);
+    await visit('/login');
+    await evaluate(`document.querySelector('main a[href="/register"]').click()`);
+    await until(`location.pathname === '/register' && !!document.getElementById('confirmPassword')`, 'Sign In must link to Create Account');
+    const newPassword = randomBytes(18).toString('base64url');
+    const newEmail = `polish-register-${-id}@example.invalid`;
+    await fill('name', 'Browser Registered User');
+    await fill('email', newEmail.toUpperCase());
+    await fill('phone', '+91 90000 12345');
+    await fill('password', newPassword);
+    await fill('confirmPassword', `${newPassword}x`);
+    assert.ok(await evaluate(`document.body.textContent.includes('The passwords do not match.')`), 'A mismatch is shown before submitting');
+    await fill('confirmPassword', newPassword);
+    await evaluate(`${formOf('confirmPassword')}.querySelector('button[type=submit]').click()`);
+    await until(`location.pathname === '/login' && document.body.textContent.includes('Your account has been created.')`, 'Registration must lead to Sign In with a confirmation', 60000);
+    const registered = (await pool.query('SELECT "Role", "Password_Hash" FROM public."USER" WHERE "Email" = $1', [newEmail])).rows[0];
+    assert.equal(registered.Role, 'USER');
+    assert.ok(registered.Password_Hash.startsWith('$argon2id$'));
+    await fill('email', newEmail);
+    await fill('password', newPassword);
+    await evaluate(`${formOf('password')}.querySelector('button[type=submit]').click()`);
+    await until(`location.pathname === '/' && document.body.textContent.includes('Sign Out') && document.body.textContent.includes('Browser Registered User')`, 'The new account must be able to sign in', 60000);
+    await visit('/admin/campus-summary');
+    assert.ok(await evaluate(`document.body.textContent.includes('Campus Summary is available only to ADMIN accounts.')`), 'A registered USER must not reach ADMIN pages');
+    await session(users[0]);
+    console.log('PASS browser: Create Account form (USER role, Argon2id), mismatch feedback, sign-in with the new account, ADMIN page denied');
 
     // Desktop widths, plus 320px = a 1280px window at 400% zoom (WCAG 1.4.10 reflow).
     for (const width of [320, 1024, 1280, 1440]) {
