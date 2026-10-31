@@ -4,7 +4,8 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { getFoundReportContext, type FoundReportContext } from "@/lib/found-report-context";
 import { getUserLostReports } from "@/lib/potential-matches";
 import { getReportOptions } from "@/lib/reference-data";
-import { searchReports } from "@/lib/search";
+import { searchReports, type SearchReport } from "@/lib/search";
+import { semanticSearch } from "@/lib/semantic-search";
 import ClaimLink from "@/app/claim/claim-link";
 import AutoSubmit from "@/components/auto-submit";
 import ExpandableText from "@/components/expandable-text";
@@ -16,7 +17,8 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Search" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
-const FILTER_KEYS = ["text", "category", "location", "type", "sort"] as const;
+const FILTER_KEYS = ["text", "mode", "category", "location", "type", "sort"] as const;
+type SearchResult = { reports: (SearchReport & { Similarity?: number })[]; error: string | null };
 
 export default async function SearchPage({ searchParams }: {
   searchParams: Promise<SearchParams>;
@@ -25,12 +27,19 @@ export default async function SearchPage({ searchParams }: {
   const user = await getAuthenticatedUser();
   // Arrays remain invalid for server validation; display only single values.
   const value = (name: string) => typeof params[name] === "string" ? params[name] : "";
+  // "Exact words" (default) matches text; "Similar meaning" ranks by embedding similarity.
+  const mode = value("mode") === "meaning" ? "meaning" : "words";
+  const needsText = mode === "meaning" && value("text").trim() === "";
   const [options, result] = await Promise.all([
     getReportOptions()
       .then((loaded) => ({ ...loaded, error: null }))
       .catch(() => ({ categories: [], locations: [], error: "Unable to load filter options. Please try again later." })),
-    searchReports({ text: params.text, category: params.category, location: params.location,
-      type: params.type, sort: params.sort }),
+    mode === "meaning"
+      ? (needsText
+        ? Promise.resolve<SearchResult>({ reports: [], error: null })
+        : semanticSearch({ text: params.text, category: params.category, location: params.location, type: params.type }))
+      : searchReports({ text: params.text, category: params.category, location: params.location,
+        type: params.type, sort: params.sort }) as Promise<SearchResult>,
   ]);
 
   let contexts: FoundReportContext[] = [];
@@ -57,12 +66,13 @@ export default async function SearchPage({ searchParams }: {
   };
   const chips: { key: string; label: string }[] = [];
   if (value("text")) chips.push({ key: "text", label: `“${value("text")}”` });
+  if (mode === "meaning") chips.push({ key: "mode", label: "Similar meaning" });
   if (value("type") && value("type") !== "Both") chips.push({ key: "type", label: `${value("type")} only` });
   const category = options.categories.find((option) => String(option.Category_ID) === value("category"));
   if (value("category")) chips.push({ key: "category", label: category?.Category_Name ?? "Selected category" });
   const location = options.locations.find((option) => String(option.Location_ID) === value("location"));
   if (value("location")) chips.push({ key: "location", label: location?.Location_Name ?? "Selected location" });
-  if (value("sort") === "oldest") chips.push({ key: "sort", label: "Oldest first" });
+  if (mode === "words" && value("sort") === "oldest") chips.push({ key: "sort", label: "Oldest first" });
 
   return (
     <main id="main-content" tabIndex={-1} className="container-page max-w-5xl py-8 sm:py-12">
@@ -79,6 +89,18 @@ export default async function SearchPage({ searchParams }: {
           </div>
           <button type="submit" className="btn btn-primary">Search</button>
         </div>
+        <fieldset className="flex flex-wrap items-center gap-3">
+          <legend className="sr-only">Match</legend>
+          <span aria-hidden="true" className="text-sm font-semibold text-ink-2">Match</span>
+          <div className="segmented min-w-[16rem]">
+            {[["words", "Exact words"], ["meaning", "Similar meaning"]].map(([option, label]) => (
+              <label key={option}>
+                <input type="radio" name="mode" value={option} defaultChecked={mode === option} />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <fieldset className="flex flex-wrap items-center gap-3">
           <legend className="sr-only">Show</legend>
           <span aria-hidden="true" className="text-sm font-semibold text-ink-2">Show</span>
@@ -112,12 +134,14 @@ export default async function SearchPage({ searchParams }: {
                 {options.locations.map((option) => <option key={option.Location_ID} value={option.Location_ID}>{option.Location_Name ?? `Location ${option.Location_ID}`}{option.Building ? ` (${option.Building})` : ""}</option>)}
               </select>
             </div>
-            <div className="field">
-              <label htmlFor="sort" className="label">Sort by date</label>
-              <select id="sort" name="sort" defaultValue={value("sort") || "newest"} className="input">
-                <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
-              </select>
-            </div>
+            {mode === "words" ? (
+              <div className="field">
+                <label htmlFor="sort" className="label">Sort by date</label>
+                <select id="sort" name="sort" defaultValue={value("sort") || "newest"} className="input">
+                  <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+                </select>
+              </div>
+            ) : <p className="self-end text-sm text-ink-3">Results are ordered by similarity.</p>}
           </div>
         </details>
       </form>
@@ -142,7 +166,19 @@ export default async function SearchPage({ searchParams }: {
               </ul>
             )}
           </div>
-          {result.reports.length === 0 ? (
+          {mode === "meaning" && !needsText && result.reports.length > 0 && (
+            <p className="mt-3 flex items-start gap-2 text-sm text-ink-2">
+              <Icon name="info" size={16} className="mt-0.5 shrink-0" />
+              <span>Ranked by how close each description is in meaning to your words. Similarity is a hint, not proof that an item is yours.</span>
+            </p>
+          )}
+          {needsText ? (
+            <div className="mt-5">
+              <EmptyState icon="sparkles" title="Describe the item to search by meaning.">
+                Similar meaning finds reports worded differently from yours, for example “blue phone” finds “black mobile with a navy case”. Type at least 3 characters.
+              </EmptyState>
+            </div>
+          ) : result.reports.length === 0 ? (
             <div className="mt-5">
               <EmptyState icon="search" title="No reports match your search."
                 actions={<>
@@ -164,6 +200,7 @@ export default async function SearchPage({ searchParams }: {
                       <p className="flex flex-wrap items-center gap-2 text-sm text-ink-3">
                         <ReportTypeBadge type={report.Report_Type} />
                         {returned && <Badge tone="done" icon="gift">Returned</Badge>}
+                        {report.Similarity !== undefined && <Badge tone="match" icon="sparkles">{Math.round(Math.max(0, report.Similarity) * 100)}% similar</Badge>}
                         <span>{formatDate(report.Report_Date)} · {placeLabel(report.Location_Name, report.Building)}</span>
                       </p>
                       <h3 className="text-lg font-bold">{report.Item_Name ?? "Unnamed item"}</h3>

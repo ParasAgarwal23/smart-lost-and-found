@@ -6,6 +6,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { Icon } from "@/components/icons";
 import { EmptyState, formatDate, Notice, placeLabel } from "@/components/ui";
+import DeleteReport from "./delete-report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,10 @@ function EditLink({ type, id }: { type: "lost" | "found"; id: number }) {
   return <Link href={`/my-reports/edit?type=${type}&id=${id}`} className="link-quiet"><Icon name="edit" size={15} />Edit</Link>;
 }
 
-export default async function MyReportsPage() {
+export default async function MyReportsPage({ searchParams }: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const deleted = (await searchParams)?.deleted;
   const user = await getAuthenticatedUser();
   if (!user) redirect(loginPath("/my-reports"));
 
@@ -36,19 +40,17 @@ export default async function MyReportsPage() {
          ORDER BY v."Date_Lost" DESC NULLS LAST, v."Lost_ID" DESC`,
         [user.User_ID],
       ),
-      // LEFT JOIN + GROUP BY: count claims per found report (zero when none)
-      // and flag whether any of them has a handover. Claimant identities stay private.
+      // Other users' claims are private (RLS), so the claim count and handover
+      // flag come from narrow helpers: the count is answered only for the
+      // report's owner, and claimant identities are never returned.
       query<MyFoundReport>(
         `SELECT v."Found_ID" AS id, v."Item_Name", v."Location_Name", v."Building",
                 v."Date_Found"::text AS date, (f."Embedding" IS NOT NULL) AS "Has_Embedding",
-                COUNT(c."Claim_ID")::text AS "Claim_Count",
-                COALESCE(BOOL_OR(h."Handover_ID" IS NOT NULL), false) AS "Has_Handover"
+                COALESCE(public.found_report_claim_count(v."Found_ID"), 0)::text AS "Claim_Count",
+                public.found_report_has_handover(v."Found_ID") AS "Has_Handover"
          FROM public.v_found_report_details v
          JOIN public."FOUND_REPORT" f ON f."Found_ID" = v."Found_ID"
-         LEFT JOIN public."CLAIM" c ON c."Found_ID" = v."Found_ID"
-         LEFT JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
          WHERE v."User_ID" = $1
-         GROUP BY v."Found_ID", v."Item_Name", v."Location_Name", v."Building", v."Date_Found", f."Embedding"
          ORDER BY v."Date_Found" DESC NULLS LAST, v."Found_ID" DESC`,
         [user.User_ID],
       ),
@@ -63,6 +65,11 @@ export default async function MyReportsPage() {
     <main id="main-content" tabIndex={-1} className="container-page max-w-4xl py-8 sm:py-12">
       <h1 className="page-title">My Reports</h1>
       <p className="page-description">Items you have reported. Check possible matches for things you lost, or edit a report if you remember more.</p>
+      {(deleted === "lost" || deleted === "found") && (
+        <Notice tone="success" className="mt-6">
+          Your {deleted} report was deleted{deleted === "lost" ? ", together with its possible-match records" : ""}. Its stored description and search vector were removed with it.
+        </Notice>
+      )}
       {error ? <Notice tone="error" className="mt-8" action={<a href="/my-reports" className="btn btn-secondary btn-sm">Try again</a>}>{error}</Notice> : (
         <div className="mt-8 grid gap-10">
           <section aria-labelledby="lost-heading">
@@ -80,7 +87,8 @@ export default async function MyReportsPage() {
                       <h3 className="font-bold">{report.Item_Name ?? "Unnamed item"}</h3>
                       <p className="text-sm text-ink-3">Lost {formatDate(report.date)} · {placeLabel(report.Location_Name, report.Building)}</p>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <DeleteReport kind="lost" reportId={report.id} itemName={report.Item_Name ?? "Unnamed item"} />
                       <EditLink type="lost" id={report.id} />
                       {report.Has_Embedding
                         ? <Link href={`/potential-matches?lostId=${report.id}`} className="btn btn-primary btn-sm"><Icon name="sparkles" size={16} />See matches</Link>
@@ -108,13 +116,19 @@ export default async function MyReportsPage() {
                         <h3 className="font-bold">{report.Item_Name ?? "Unnamed item"}</h3>
                         <p className="text-sm text-ink-3">Found {formatDate(report.date)} · {placeLabel(report.Location_Name, report.Building)}</p>
                       </div>
-                      <div className="flex items-center gap-4 text-sm">
+                      <div className="flex flex-wrap items-center gap-4 text-sm">
                         {report.Has_Handover
                           ? <span className="flex items-center gap-1.5 font-semibold text-success"><Icon name="gift" size={16} />Returned to owner</span>
                           : <>
                             <span className="text-ink-2">{claims === 0 ? "No claims yet" : `${claims} ${claims === 1 ? "claim" : "claims"}`}</span>
                             <EditLink type="found" id={report.id} />
                           </>}
+                        {claims === 0
+                          ? <DeleteReport kind="found" reportId={report.id} itemName={report.Item_Name ?? "Unnamed item"} />
+                          : <span className="flex items-center gap-1.5 text-ink-3">
+                            <button type="button" disabled aria-describedby={`no-delete-${report.id}`} className="link-quiet cursor-not-allowed opacity-60"><Icon name="trash" size={15} />Delete</button>
+                            <span id={`no-delete-${report.id}`} className="text-meta">Kept: claimed items can&apos;t be deleted</span>
+                          </span>}
                       </div>
                     </li>
                   );
