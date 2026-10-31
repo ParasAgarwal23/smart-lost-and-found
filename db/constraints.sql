@@ -1,4 +1,5 @@
--- Integrity constraints added after the initial schema (revision 2026-10-16).
+-- Integrity constraints added after the initial schema (revision 2026-10-16;
+-- the two USER email checks were added in revision 2026-10-31).
 -- Run once against an existing smart_lost_found database:
 --   psql -X -v ON_ERROR_STOP=1 -d smart_lost_found -f db/constraints.sql
 -- Fresh installs get the same constraints from db/schema.sql; this script is
@@ -10,8 +11,8 @@ DO $$
 DECLARE
     conflicts TEXT := '';
 BEGIN
-    IF current_database() <> 'smart_lost_found' THEN
-        RAISE EXCEPTION 'Connect to smart_lost_found before running this script';
+    IF current_database() !~ '^smart_lost_found(_test|_demo)?$' THEN
+        RAISE EXCEPTION 'Connect to smart_lost_found, smart_lost_found_test or smart_lost_found_demo before running this script';
     END IF;
 
     IF EXISTS (SELECT 1 FROM public."USER" WHERE "Role" NOT IN ('USER', 'ADMIN')) THEN
@@ -19,6 +20,12 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM public."USER" WHERE "Email" IS NOT NULL GROUP BY "Email" HAVING COUNT(*) > 1) THEN
         conflicts := conflicts || ' duplicate USER.Email;';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public."USER" WHERE "Email" !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$') THEN
+        conflicts := conflicts || ' malformed USER.Email;';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public."USER" WHERE "Email" <> lower(btrim("Email"))) THEN
+        conflicts := conflicts || ' USER.Email not lower-case/trimmed;';
     END IF;
     IF EXISTS (SELECT 1 FROM public."LOST_REPORT" WHERE btrim("Item_Name") = '') THEN
         conflicts := conflicts || ' blank LOST_REPORT.Item_Name;';
@@ -47,6 +54,8 @@ BEGIN
         SELECT * FROM (VALUES
             ('USER', 'USER_Role_check', 'CHECK ("Role" IN (''USER'', ''ADMIN''))'),
             ('USER', 'USER_Email_key', 'UNIQUE ("Email")'),
+            ('USER', 'USER_Email_format_check', 'CHECK ("Email" ~ ''^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'')'),
+            ('USER', 'USER_Email_lowercase_check', 'CHECK ("Email" = lower(btrim("Email")))'),
             ('LOST_REPORT', 'LOST_REPORT_Item_Name_check', 'CHECK (btrim("Item_Name") <> '''')'),
             ('FOUND_REPORT', 'FOUND_REPORT_Item_Name_check', 'CHECK (btrim("Item_Name") <> '''')'),
             ('CLAIM_EVIDENCE', 'CLAIM_EVIDENCE_Evidence_No_check', 'CHECK ("Evidence_No" >= 1)'),

@@ -3,7 +3,7 @@
 -- Negative IDs below are test identifiers only, not an ID-generation policy.
 \set ON_ERROR_STOP on
 
-SELECT current_database() = 'smart_lost_found'
+SELECT current_database() ~ '^smart_lost_found(_test|_demo)?$'
     AND NOT EXISTS (SELECT 1 FROM public."USER")
     AND NOT EXISTS (SELECT 1 FROM public."CATEGORY")
     AND NOT EXISTS (SELECT 1 FROM public."LOCATION")
@@ -17,7 +17,7 @@ SELECT current_database() = 'smart_lost_found'
 \gset
 \if :ready
 \else
-    \echo 'STOP: run only in the empty smart_lost_found demonstration database.'
+    \echo 'STOP: run only in an empty smart_lost_found, smart_lost_found_test or smart_lost_found_demo database.'
     \quit 1
 \endif
 
@@ -26,6 +26,7 @@ SELECT current_database() = 'smart_lost_found'
 -- No status values or other business rules are introduced. Two test users are
 -- needed because CLAIM_User_ID_Found_ID_key allows one claim per user per item.
 BEGIN;
+-- Runs as the database owner (MAINTENANCE connection); application roles cannot write USER.
 INSERT INTO public."USER" ("User_ID", "Password_Hash")
 VALUES (-1, 'TRANSACTION_DEMO_NOT_A_USABLE_PASSWORD_HASH'),
        (-2, 'TRANSACTION_DEMO_NOT_A_USABLE_PASSWORD_HASH');
