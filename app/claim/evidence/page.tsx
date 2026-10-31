@@ -25,8 +25,7 @@ export default async function ClaimEvidencePage({ searchParams }: {
   try {
     const result = await query<(typeof claims)[number]>(
       `SELECT c."Claim_ID", f."Item_Name", c."Claim_Date"::text AS "Claim_Date",
-              EXISTS (SELECT 1 FROM public."CLAIM" other JOIN public."HANDOVER" h ON h."Claim_ID" = other."Claim_ID"
-                      WHERE other."Found_ID" = c."Found_ID") AS "Has_Handover"
+              public.found_report_has_handover(c."Found_ID") AS "Has_Handover"
        FROM public."CLAIM" c
        JOIN public."FOUND_REPORT" f ON f."Found_ID" = c."Found_ID"
        WHERE c."User_ID" = $1

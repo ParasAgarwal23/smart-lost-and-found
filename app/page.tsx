@@ -21,10 +21,10 @@ export default async function Home() {
   try {
     // Reads the report-detail view, which joins CATEGORY and LOCATION, and flags
     // items that already have a handover so visitors know before they click.
+    // Claims are private (RLS), so the flag comes from a narrow helper function.
     const result = await query<RecentFound>(
       `SELECT f."Found_ID", f."Item_Name", f."Location_Name", f."Building", f."Date_Found"::text AS "Date_Found",
-              EXISTS (SELECT 1 FROM public."CLAIM" c JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
-                      WHERE c."Found_ID" = f."Found_ID") AS "Returned"
+              public.found_report_has_handover(f."Found_ID") AS "Returned"
        FROM public.v_found_report_details f
        ORDER BY f."Date_Found" DESC NULLS LAST, f."Found_ID" DESC LIMIT 4`,
     );

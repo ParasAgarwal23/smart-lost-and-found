@@ -139,10 +139,7 @@ export async function updateReport(formData: FormData): Promise<ReportState> {
       if (kind === "found") {
         // A completed handover closes the record its claimants relied on.
         const handed = await client.query<{ handed_over: boolean }>(
-          `SELECT EXISTS (
-             SELECT 1 FROM public."CLAIM" c JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
-             WHERE c."Found_ID" = $1
-           ) AS handed_over`,
+          'SELECT public.found_report_has_handover($1) AS handed_over',
           [reportId],
         );
         if (handed.rows[0].handed_over) {

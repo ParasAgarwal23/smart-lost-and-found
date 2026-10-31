@@ -64,16 +64,17 @@ export async function createHandover(
         throw new HandoverError("Claim not found or unavailable to your account.");
       }
 
-      const existing = await client.query<{ Claim_ID: number }>(
-        `SELECT h."Claim_ID" FROM public."HANDOVER" AS h
-         JOIN public."CLAIM" AS c ON c."Claim_ID" = h."Claim_ID"
-         WHERE c."Found_ID" = $1`,
-        [foundId],
+      // This claim's own receipt is visible to its owner; another claimant's
+      // receipt is not (RLS), so the helper answers for the item as a whole.
+      const existing = await client.query<{ own_receipt: boolean; item_handed_over: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM public."HANDOVER" AS h WHERE h."Claim_ID" = $1) AS own_receipt,
+                public.found_report_has_handover($2) AS item_handed_over`,
+        [claimId, foundId],
       );
-      if (existing.rows.some((handover) => handover.Claim_ID === claimId)) {
+      if (existing.rows[0].own_receipt) {
         throw new HandoverError(duplicateMessage);
       }
-      if (existing.rows.length > 0) {
+      if (existing.rows[0].item_handed_over) {
         throw new HandoverError("This item has already been handed over.");
       }
 
@@ -81,9 +82,10 @@ export async function createHandover(
         // Recover from a random ID collision while retaining the parent claim lock.
         await client.query("SAVEPOINT handover_insert");
         try {
+          // Handover_Date comes from its DEFAULT CURRENT_DATE.
           await client.query(
-            `INSERT INTO public."HANDOVER" ("Handover_ID", "Claim_ID", "Handover_Date", "Signature")
-             VALUES ($1, $2, CURRENT_DATE, $3)`,
+            `INSERT INTO public."HANDOVER" ("Handover_ID", "Claim_ID", "Signature")
+             VALUES ($1, $2, $3)`,
             [randomInt(1, 2147483648), claimId, signature],
           );
           await client.query("RELEASE SAVEPOINT handover_insert");

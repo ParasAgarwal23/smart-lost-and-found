@@ -1,9 +1,8 @@
 import "server-only";
 
 import { z } from "zod";
-import { query } from "@/lib/db";
+import { loadSessionUser, query, type SessionUserRow } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
-import { readSession } from "@/lib/session";
 
 const roleSchema = z.enum(["USER", "ADMIN"]);
 export type Role = z.infer<typeof roleSchema>;
@@ -11,30 +10,25 @@ export type Role = z.infer<typeof roleSchema>;
 export type AuthenticatedUser = {
   User_ID: number;
   Name: string | null;
-  Email: string | null;
-  Phone: string | null;
   Role: Role;
 };
 
-type UserRow = Omit<AuthenticatedUser, "Role"> & { Role: string | null };
-type CredentialRow = UserRow & { Password_Hash: string };
+type CredentialRow = { User_ID: number; Role: string | null; Password_Hash: string };
+
+// Emails are stored trimmed and lower-case (USER_Email_lowercase_check), so
+// sign-in and registration normalise the same way.
+export const emailSchema = z.string().trim().toLowerCase().max(100).pipe(z.email());
 
 const credentialsSchema = z.object({
-  email: z.string().trim().max(100).pipe(z.email()),
+  email: emailSchema,
   password: z.string().min(1).max(1024),
 });
 
-function safeUser(row: UserRow): AuthenticatedUser | null {
+function safeUser(row: SessionUserRow): AuthenticatedUser | null {
   const role = roleSchema.safeParse(row.Role);
   if (!role.success) return null;
   // Explicit selection prevents hashes or other internal fields escaping.
-  return {
-    User_ID: row.User_ID,
-    Name: row.Name,
-    Email: row.Email,
-    Phone: row.Phone,
-    Role: role.data,
-  };
+  return { User_ID: row.User_ID, Name: row.Name, Role: role.data };
 }
 
 // Verifies credentials only; the future login action creates the session.
@@ -45,35 +39,28 @@ export async function authenticateUser(
   const parsed = credentialsSchema.safeParse({ email, password });
   if (!parsed.success) return null;
 
-  // Exact, case-sensitive email lookup; no unapproved normalization policy.
+  // The application roles cannot read "USER"; auth_credentials returns the ID,
+  // role and hash for one exact normalised email (db/security_functions.sql).
   // NULL emails cannot match. "USER_Email_key" makes emails unique; LIMIT 2
-  // remains a cheap defensive check against ambiguity.
+  // in the function remains a cheap defensive check against ambiguity.
   const result = await query<CredentialRow>(
-    `SELECT "User_ID", "Name", "Email", "Phone", "Role", "Password_Hash"
-     FROM public."USER" WHERE "Email" = $1 LIMIT 2`,
+    'SELECT "User_ID", "Role", "Password_Hash" FROM public.auth_credentials($1)',
     [parsed.data.email],
   );
   if (result.rows.length !== 1) return null;
 
   const row = result.rows[0];
-  const user = safeUser(row);
-  if (!user || !(await verifyPassword(parsed.data.password, row.Password_Hash))) {
+  const role = roleSchema.safeParse(row.Role);
+  if (!role.success || !(await verifyPassword(parsed.data.password, row.Password_Hash))) {
     return null;
   }
-  return user;
+  return { User_ID: row.User_ID, Name: null, Role: role.data };
 }
 
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> {
-  const session = await readSession();
-  if (!session) return null;
-
   // Reload permissions each time; never authorize using a cookie/client role.
-  const result = await query<UserRow>(
-    `SELECT "User_ID", "Name", "Email", "Phone", "Role"
-     FROM public."USER" WHERE "User_ID" = $1`,
-    [session.User_ID],
-  );
-  return result.rows.length === 1 ? safeUser(result.rows[0]) : null;
+  const row = await loadSessionUser();
+  return row ? safeUser(row) : null;
 }
 
 export class AuthorizationError extends Error {

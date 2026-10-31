@@ -44,12 +44,10 @@ export async function createClaim(
         throw new ClaimError("You cannot claim your own found report.");
       }
 
+      // Other users' claims are invisible under RLS; found_report_has_handover
+      // answers the one cross-user question this check needs.
       const eligibility = await client.query<{ has_handover: boolean; already_claimed: boolean }>(
-        `SELECT EXISTS (
-           SELECT 1 FROM public."CLAIM" c
-           JOIN public."HANDOVER" h ON h."Claim_ID" = c."Claim_ID"
-           WHERE c."Found_ID" = $1
-         ) AS has_handover,
+        `SELECT public.found_report_has_handover($1) AS has_handover,
          EXISTS (
            SELECT 1 FROM public."CLAIM" WHERE "Found_ID" = $1 AND "User_ID" = $2
          ) AS already_claimed`,
@@ -67,9 +65,10 @@ export async function createClaim(
         await client.query("SAVEPOINT claim_insert");
         try {
           const insertedClaimId = randomInt(1, 2147483648);
+          // Claim_Date comes from its DEFAULT CURRENT_DATE; Status stays NULL.
           await client.query(
-            `INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID", "Claim_Date", "Status")
-             VALUES ($1, $2, $3, CURRENT_DATE, NULL)`,
+            `INSERT INTO public."CLAIM" ("Claim_ID", "User_ID", "Found_ID")
+             VALUES ($1, $2, $3)`,
             [insertedClaimId, user.User_ID, foundId],
           );
           await client.query("RELEASE SAVEPOINT claim_insert");
@@ -100,9 +99,11 @@ export async function createClaim(
 
 export type WithdrawState = { error: string | null; success: string | null; signedOut?: boolean };
 
-// DELETE workflow: remove the claimant's own claim and its weak-entity
-// evidence rows atomically. Locks FOUND_REPORT then CLAIM, the same order as
-// createHandover, so a concurrent handover and withdrawal cannot deadlock.
+// DELETE workflow, implemented by the stored procedure public.withdraw_claim
+// (db/procedures.sql): it checks ownership from the session identity, locks
+// FOUND_REPORT then CLAIM (the same order as createHandover, so a concurrent
+// handover and withdrawal cannot deadlock), refuses after a handover, and
+// deletes the evidence rows before the claim, all inside this transaction.
 export async function withdrawClaim(
   _previousState: WithdrawState,
   formData: FormData,
@@ -115,31 +116,17 @@ export async function withdrawClaim(
     if (!parsed.success) return { error: "Claim not found or unavailable to your account.", success: null };
     const { claimId } = parsed.data;
 
-    const removedEvidence = await withTransaction(async (client) => {
-      const report = await client.query(
-        `SELECT f."Found_ID" FROM public."FOUND_REPORT" AS f
-         JOIN public."CLAIM" AS c ON c."Found_ID" = f."Found_ID"
-         WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE OF f`,
-        [claimId, user.User_ID],
-      );
-      if (report.rows.length !== 1) throw new ClaimError("Claim not found or unavailable to your account.");
-
-      const claim = await client.query<{ has_handover: boolean }>(
-        `SELECT EXISTS (SELECT 1 FROM public."HANDOVER" h WHERE h."Claim_ID" = c."Claim_ID") AS has_handover
-         FROM public."CLAIM" AS c WHERE c."Claim_ID" = $1 AND c."User_ID" = $2 FOR UPDATE`,
-        [claimId, user.User_ID],
-      );
-      if (claim.rows.length !== 1) throw new ClaimError("Claim not found or unavailable to your account.");
-      if (claim.rows[0].has_handover) {
-        // The HANDOVER foreign key (NO ACTION) would also reject this DELETE.
-        throw new ClaimError("This claim has a recorded handover and cannot be withdrawn.");
-      }
-
-      // Children first: CLAIM_EVIDENCE references CLAIM without cascading.
-      const evidence = await client.query(`DELETE FROM public."CLAIM_EVIDENCE" WHERE "Claim_ID" = $1`, [claimId]);
-      await client.query(`DELETE FROM public."CLAIM" WHERE "Claim_ID" = $1 AND "User_ID" = $2`, [claimId, user.User_ID]);
-      return evidence.rowCount ?? 0;
-    });
+    let removedEvidence: number;
+    try {
+      const result = await withTransaction((client) =>
+        client.query<{ p_removed_evidence: number }>("CALL public.withdraw_claim($1, NULL)", [claimId]));
+      removedEvidence = result.rows[0]?.p_removed_evidence ?? 0;
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+      if (code === "LF404") throw new ClaimError("Claim not found or unavailable to your account.");
+      if (code === "LF409") throw new ClaimError("This claim has a recorded handover and cannot be withdrawn.");
+      throw error;
+    }
     for (const path of ["/claim", "/claim/evidence", "/claim/handover", "/search", "/potential-matches", "/my-reports"]) {
       revalidatePath(path);
     }
