@@ -27,4 +27,17 @@ AS $$
     WHERE claim."Claim_ID" = p_claim_id;
 $$;
 
+-- Identity of the signed-in application user for the current transaction.
+-- lib/db.ts sets app.user_id with set_config(..., true) (transaction-local) from
+-- the server-verified session; it is never taken from a browser field. Returns
+-- NULL for anonymous requests. Used by RLS policies and the stored procedures.
+CREATE OR REPLACE FUNCTION public.app_current_user_id()
+RETURNS INTEGER
+LANGUAGE SQL
+STABLE
+SECURITY INVOKER
+AS $$
+    SELECT NULLIF(current_setting('app.user_id', true), '')::INTEGER;
+$$;
+
 COMMIT;
