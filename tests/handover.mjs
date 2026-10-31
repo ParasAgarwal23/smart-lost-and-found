@@ -1,63 +1,17 @@
-// Run against the configured local database: node tests/handover.mjs
-// Uses production action/auth/transaction code with only the request session
-// supplied by AsyncLocalStorage (no Next.js HTTP/cookie runtime in this runner).
-// Temporary fixtures are committed for cross-connection concurrency testing;
-// finally deletes only those fixtures and compares all ten tables exactly.
+// Run with npm test. Uses the isolated database smart_lost_found_test only
+// (tests/support.mjs retargets and verifies every connection) and production
+// action/auth/transaction code running as the least-privilege lf_web login.
+// Temporary fixtures are committed through the owner connection for
+// cross-connection concurrency testing; finally deletes only those fixtures
+// and compares all ten tables exactly.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomInt } from 'node:crypto';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
-import pg from 'pg';
-import nextEnv from '@next/env';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { applicationName, assertIsolated, closePools, invalidatedPaths, loadProduction, pool, renderPage, root, sessions, watchdog } from './support.mjs';
 
-const requireDependency = createRequire(import.meta.url);
-const { Pool } = pg;
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-nextEnv.loadEnvConfig(root);
-process.env.NODE_ENV = 'development';
-const connection = new URL(process.env.DATABASE_URL);
-const applicationName = `handover-regression-${process.pid}`;
-connection.searchParams.set('application_name', applicationName);
-process.env.DATABASE_URL = connection.toString();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const sessions = new AsyncLocalStorage();
-const modules = new Map();
-const invalidatedPaths = [];
-
-function loadProduction(relative) {
-  if (modules.has(relative)) return modules.get(relative).exports;
-  const filename = path.join(root, relative);
-  const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
-    fileName: filename,
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
-  }).outputText;
-  const loadedModule = { exports: {} };
-  modules.set(relative, loadedModule);
-  const localRequire = (name) => {
-    if (name === 'server-only') return {};
-    // Revalidation requires Next's request runtime; record calls in this runner.
-    if (name === 'next/cache') return { revalidatePath: (pathname) => invalidatedPaths.push(pathname) };
-    // Static header rendering has no mounted App Router; keep redirect() and the other exports real.
-    if (name === 'next/navigation') return { ...requireDependency(name), useRouter: () => ({ refresh() {} }) };
-    if (name === '@/lib/session') return { readSession: async () => sessions.getStore() ?? null };
-    if (name.startsWith('@/')) {
-      const target = name.slice(2);
-      return loadProduction(`${target}.${fs.existsSync(path.join(root, `${target}.ts`)) ? 'ts' : 'tsx'}`);
-    }
-    if (name.startsWith('.')) return loadProduction(path.join(path.dirname(relative), `${name}.tsx`));
-    return requireDependency(name);
-  };
-  vm.runInThisContext(`(function(require, module, exports) {\n${compiled}\n})`, { filename })(
-    localRequire, loadedModule, loadedModule.exports,
-  );
-  return loadedModule.exports;
-}
+watchdog(600);
 
 const { createHandover } = loadProduction('app/actions/handover.ts');
 const { createClaim } = loadProduction('app/actions/claim.ts');
@@ -126,13 +80,6 @@ async function handovers() {
   return (await pool.query('SELECT "Claim_ID", "Signature", "Handover_Date"::text AS date, CURRENT_DATE::text AS today FROM public."HANDOVER" WHERE "Claim_ID" = ANY($1::int[]) ORDER BY "Claim_ID"', [claims])).rows;
 }
 
-async function renderPage(relative, userId, params = {}, inspect = () => {}) {
-  const page = loadProduction(relative).default;
-  const element = await sessions.run({ User_ID: userId }, () => page({ searchParams: Promise.resolve(params) }));
-  inspect(element);
-  return renderToStaticMarkup(element);
-}
-
 function formKey(element, formName) {
   if (!element || typeof element !== 'object') return undefined;
   if (element.type?.name === formName) return element.key;
@@ -189,46 +136,43 @@ async function overlapping(reportId, operations) {
 }
 
 async function campusSummaryChecks() {
-  const database = loadProduction('lib/db.ts');
-  const originalQuery = database.query;
-  let aggregateCalls = 0;
-  const insightReads = [];
-  let adminReads = 0;
+  const adminDb = loadProduction('lib/admin-db.ts');
+  const originalAdminQuery = adminDb.adminQuery;
+  const reads = [];
   try {
-    database.query = async (sql, values) => {
-      if (sql.startsWith('SELECT COUNT(*)::text AS count')) aggregateCalls++;
-      if (!sql.includes('FROM public."USER"')) adminReads++;
-      const result = await originalQuery(sql, values);
-      if (sql.startsWith('WITH reports AS')) insightReads.push({ sql, values, rows: result.rows });
+    adminDb.adminQuery = async (sql, values) => {
+      const result = await originalAdminQuery(sql, values);
+      reads.push({ sql, values, rows: result.rows });
       return result;
     };
     await assert.rejects(renderPage('app/admin/campus-summary/page.tsx', null), error => error.digest?.includes('/login'));
     const denied = await renderPage('app/admin/campus-summary/page.tsx', users[0], { Role: 'ADMIN', User_ID: users[2] });
     assert.ok(denied.includes('Access denied'));
     assert.ok(!denied.includes('Campus totals'));
-    assert.equal(aggregateCalls, 0, 'Unauthorized requests must not run aggregate queries');
-    assert.equal(adminReads, 0, 'Authorization must precede all campus data reads');
+    assert.equal(reads.length, 0, 'Authorization must precede all campus data reads');
+    // adminQuery re-checks the role itself, so a USER can never reach the admin login.
+    await assert.rejects(sessions.run({ User_ID: users[0] }, () => originalAdminQuery('SELECT 1')), error => error.status === 403);
+    await assert.rejects(sessions.run(null, () => originalAdminQuery('SELECT 1')), error => error.status === 401);
+
     const admin = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
-    assert.equal(aggregateCalls, 4);
     for (const [table, label] of [['LOST_REPORT', 'Total lost reports'], ['FOUND_REPORT', 'Total found reports'], ['CLAIM', 'Total claims'], ['HANDOVER', 'Total handovers']]) {
       const { rows } = await pool.query(`SELECT COUNT(*)::text AS count FROM public."${table}"`);
       assert.ok(admin.includes(label));
       assert.ok(admin.includes(`>${BigInt(rows[0].count).toLocaleString('en-US')}</dd>`));
     }
-    assert.equal(insightReads.length, 3);
-    for (const [table, key, name] of [['CATEGORY', 'Category_ID', 'Category_Name'], ['LOCATION', 'Location_ID', 'Location_Name']]) {
+    for (const [table, key, name, view] of [['CATEGORY', 'Category_ID', 'Category_Name', 'admin_reports_by_category'], ['LOCATION', 'Location_ID', 'Location_Name', 'admin_reports_by_location']]) {
       // Independent correlated counts catch lost/found join multiplication.
       const direct = (await pool.query(`SELECT d."${key}" AS id, d."${name}" AS label,
         ${table === 'LOCATION' ? 'd."Building"' : 'NULL::text'} AS building,
         (SELECT COUNT(*) FROM public."LOST_REPORT" r WHERE r."${key}"=d."${key}")::text AS lost,
         (SELECT COUNT(*) FROM public."FOUND_REPORT" r WHERE r."${key}"=d."${key}")::text AS found
         FROM public."${table}" d ORDER BY d."${key}"`)).rows;
-      const captured = insightReads.find(read => read.sql.includes(`FROM public."${table}"`)).rows;
+      const captured = reads.find(read => read.sql.includes(view)).rows;
       const expected = direct.map(row => ({ ...row, total: String(BigInt(row.lost) + BigInt(row.found)) }));
       assert.deepEqual([...captured].sort((a,b) => a.id-b.id), expected);
       for (let n=1;n<captured.length;n++) assert.ok(BigInt(captured[n-1].total) >= BigInt(captured[n].total));
     }
-    const activity = insightReads.find(read => read.sql.includes('LIMIT $1'));
+    const activity = reads.find(read => read.sql.includes('LIMIT $1'));
     assert.deepEqual(activity.values, [10]);
     const expectedRecent = (await pool.query(`SELECT r.id, r.type, r.item, c."Category_Name" AS category,
       l."Location_Name" AS location, l."Building" AS building, r.date::text AS date
@@ -239,35 +183,37 @@ async function campusSummaryChecks() {
       ORDER BY r.date DESC NULLS LAST, r.id DESC, r.type ASC LIMIT $1`, [10])).rows;
     assert.deepEqual(activity.rows, expectedRecent);
     assert.ok(admin.includes('Reports by Category') && admin.includes('Reports by Location') && admin.includes('Recent Campus Activity'));
+    assert.ok(admin.includes('Daily Activity') && admin.includes('Location Hotspots') && admin.includes('Contested Items'));
     // Exercise empty and failed reads without altering genuine database records.
-    database.query = async (sql, values) => sql.startsWith('SELECT COUNT(*)::text AS count') ? { rows: [{ count: '0' }] } : sql.startsWith('WITH reports AS') ? { rows: [] } : originalQuery(sql, values);
+    adminDb.adminQuery = async (sql, values) => sql.includes('admin_campus_totals') ? { rows: [{ lost: '0', found: '0', claims: '0', handovers: '0' }] }
+      : /admin_reports_by|LIMIT \$1/.test(sql) ? { rows: [] } : originalAdminQuery(sql, values);
     const empty = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
     assert.equal((empty.match(/>0<\/dd>/g) ?? []).length, 4);
     assert.ok(empty.includes('No category records') && empty.includes('No location records') && empty.includes('No lost or found reports'));
-    database.query = async (sql, values) => {
-      if (sql.startsWith('SELECT COUNT(*)::text AS count')) throw Error('Private database diagnostic');
-      return originalQuery(sql, values);
+    adminDb.adminQuery = async (sql, values) => {
+      if (sql.includes('admin_campus_totals')) throw Error('Private database diagnostic');
+      return originalAdminQuery(sql, values);
     };
     const failed = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
     assert.ok(failed.includes('Unable to load campus totals.'));
     assert.ok(failed.includes('Try again'));
     assert.ok(!failed.includes('Private database diagnostic'));
     assert.ok(!failed.includes('Campus totals'));
-    database.query = async (sql, values) => {
-      if (sql.startsWith('WITH reports AS')) throw Error('Private insight diagnostic');
-      return originalQuery(sql, values);
+    adminDb.adminQuery = async (sql, values) => {
+      if (/admin_reports_by|LIMIT \$1/.test(sql)) throw Error('Private insight diagnostic');
+      return originalAdminQuery(sql, values);
     };
     const partial = await renderPage('app/admin/campus-summary/page.tsx', users[2]);
     assert.ok(partial.includes('Campus totals'));
     assert.ok(partial.includes('Unable to load campus insights and recent activity.'));
     assert.ok(!partial.includes('Private insight diagnostic'));
     assert.ok(!partial.includes('aria-label="Recent Campus Activity"'));
-  } finally { database.query = originalQuery; }
+  } finally { adminDb.adminQuery = originalAdminQuery; }
   for (const user of [null, users[0], users[2]]) {
     const home = await renderPage('app/page.tsx', user);
     assert.equal(home.includes('href="/admin/campus-summary"'), user === users[2]);
   }
-  console.log('PASS Campus Summary: ADMIN guard before all seven queries, independent category/location totals, recent records and ordering, live counts, empty/error states, and role-specific navigation');
+  console.log('PASS Campus Summary: ADMIN guard before every read (page and adminQuery), independent category/location totals, recent records and ordering, live counts, new analytics sections, empty/error states, and role-specific navigation');
 }
 
 async function workflowBeforeHandover() {
@@ -328,11 +274,13 @@ async function workflowBeforeHandover() {
   assert.ok((await renderPage('app/claim/page.tsx', users[0], { foundId: 'invalid' })).includes('href="/search?type=Found"'));
   assert.ok(!/Claim #-?\d/.test(await renderPage('app/claim/page.tsx', users[0])), 'Claim cards must not show internal claim numbers');
   const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
-  const context = await getFoundReportContext(reports, users[0]);
+  // The database principal comes from the session, so call it inside one.
+  const contextAs = (userId, ids) => sessions.run(userId === null ? null : { User_ID: userId }, () => getFoundReportContext(ids, userId));
+  const context = await contextAs(users[0], reports);
   assert.equal(context.find((row) => row.Found_ID === reports[0]).Own_Claim_ID, claims[0]);
   assert.equal(context.find((row) => row.Found_ID === reports[3]).Own_Claim_ID, null);
-  assert.equal((await getFoundReportContext([reports[3]], users[2]))[0].Is_Own_Report, true);
-  assert.ok((await getFoundReportContext(reports, null)).every((row) => row.Own_Claim_ID === null));
+  assert.equal((await contextAs(users[2], [reports[3]]))[0].Is_Own_Report, true);
+  assert.ok((await contextAs(null, reports)).every((row) => row.Own_Claim_ID === null));
   const search = await renderPage('app/search/page.tsx', users[0], { category: String(id), type: 'Found' });
   assert.ok(search.includes(`/claim?foundId=${reports[3]}#submit-claim`));
   assert.ok(search.includes('You have already claimed this item.'));
@@ -775,6 +723,7 @@ async function constraintChecks() {
 }
 
 async function run() {
+  await assertIsolated();
   const before = await snapshot();
   try {
     await transaction(async (client) => {
@@ -869,7 +818,7 @@ async function run() {
     console.log('PASS: existing HANDOVER Claim_ID UNIQUE constraint preserved');
     await workflowAfterHandover(createdClaimId);
     const { getFoundReportContext } = loadProduction('lib/found-report-context.ts');
-    assert.ok((await getFoundReportContext(reports, users[0])).every((row) => row.Has_Handover));
+    assert.ok((await sessions.run({ User_ID: users[0] }, () => getFoundReportContext(reports, users[0]))).every((row) => row.Has_Handover));
     await withdrawChecks();
     await evidenceLockChecks();
     await editReportChecks();
@@ -890,7 +839,8 @@ async function run() {
       await client.query('DELETE FROM public."FOUND_REPORT" WHERE "Found_ID" = ANY($1::int[])', [reports]);
       await client.query('DELETE FROM public."LOCATION" WHERE "Location_ID" = $1', [id]);
       await client.query('DELETE FROM public."CATEGORY" WHERE "Category_ID" = $1', [id]);
-      await client.query('DELETE FROM public."USER" WHERE "User_ID" = ANY($1::int[])', [users]);
+      // Includes the account the browser checks create through the registration form.
+      await client.query('DELETE FROM public."USER" WHERE "User_ID" = ANY($1::int[]) OR "Email" = $2', [users, `polish-register-${-id}@example.invalid`]);
     });
     const after = await snapshot();
     for (const table of tables) {
@@ -906,7 +856,4 @@ run().catch((error) => {
   const where = error.stack?.split('\n').find((line) => /[\\/]tests[\\/]/.test(line)) ?? '';
   console.error(`FAIL: ${error.message}${where}`);
   process.exitCode = 1;
-}).finally(async () => {
-  await pool.end();
-  if (globalThis.postgresPool) await globalThis.postgresPool.end();
-});
+}).finally(closePools);

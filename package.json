@@ -8,9 +8,10 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node tests/handover.mjs",
+    "test": "node tests/handover.mjs && node tests/rbac.mjs && node tests/features.mjs && node tests/vector-index.mjs",
     "test:browser": "node tests/handover.mjs --browser",
-    "db:backfill-embeddings": "node scripts/backfill-embeddings.mjs"
+    "db:backfill-embeddings": "node scripts/backfill-embeddings.mjs",
+    "provision:admin": "node scripts/provision-account.mjs --role ADMIN"
   },
   "engines": {
     "node": ">=22.13.0"
