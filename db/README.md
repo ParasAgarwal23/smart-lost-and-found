@@ -1,177 +1,198 @@
-# Initial PostgreSQL schema
+# Database scripts (PostgreSQL 18 + pgvector 0.8.6)
 
-Source of truth: the ER diagram (`docs/lost_found_ER_diagram.drawio`), the relational schema (`docs/lost_found_relational_schema.drawio`) and the college requirements PDF. PNG exports of both are in `docs/diagrams/`. The nine non-primary-key foreign keys in LOST_REPORT, FOUND_REPORT, CLAIM, and HANDOVER are NOT NULL as explicitly approved by the user. All primary-key components are implicitly NOT NULL; Password_Hash is explicitly NOT NULL. Other attributes remain nullable.
+Source of truth: the ER diagram (`docs/lost_found_ER_diagram.drawio`), the relational schema (`docs/lost_found_relational_schema.drawio`) and the college requirements PDF. PNG exports of both are in `docs/diagrams/`. The nine non-primary-key foreign keys in LOST_REPORT, FOUND_REPORT, CLAIM and HANDOVER are NOT NULL. All primary-key components are implicitly NOT NULL; Password_Hash is explicitly NOT NULL. Other attributes remain nullable.
 
-The scripts create the ten approved relations in PostgreSQL's standard `public` schema. Table and column identifiers are consistently quoted to preserve their exact approved spelling, including `"USER"`.
+The scripts create the ten relations in PostgreSQL's standard `public` schema. Table and column identifiers are consistently quoted to preserve their exact spelling, including `"USER"`. pgvector is an **extension inside the same PostgreSQL server**, not a separate database.
 
-## Run from the repository root
+## Databases and safety guards
 
-PostgreSQL 18 and the already-enabled vector extension version 0.8.6 are required. Its VECTOR type must be accessible through the connection's search path. Use your locally configured PostgreSQL role; the example below uses postgres.
+| Database | Purpose |
+| --- | --- |
+| `smart_lost_found` | The real application database. Never written by tests. |
+| `smart_lost_found_test` | Isolated clone for automated tests (`createdb -T smart_lost_found smart_lost_found_test`). |
+| `smart_lost_found_demo` | Fresh install from these scripts + demo data, used for the demonstration and screenshots. |
 
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/schema.sql
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/verify.sql
-```
+Every setup/migration script refuses to run unless `current_database()` is one of these three names (an explicit allowlist), and `db/demo_seed.sql` runs **only** in `smart_lost_found_demo`. The test suites go further: `tests/support.mjs` retargets every connection to `smart_lost_found_test` and stops unless all of them really reach it.
 
-Authenticate through PostgreSQL's interactive password prompt or a local password file (`%APPDATA%\postgresql\pgpass.conf` on Windows). Do not put passwords in these scripts or commit credentials.
+## Fresh installation (setup order)
 
-`schema.sql` is a one-time creation script, not a rerunnable migration. It uses a transaction and plain CREATE TABLE, so existing table names cause an error rather than being overwritten or silently accepted. With ON_ERROR_STOP enabled, a failure aborts execution and disconnecting rolls back the transaction. The script does not create, update, or reinstall the vector extension.
-
-`verify.sql` is read-only and raises an error if the expected tables, column types/nullability, keys, CHECK/UNIQUE constraints, or extension are missing or incorrect. It also lists all primary, foreign, and unique constraints for review. It inserts no sample data and creates no stored functions.
-
-Validated on 2026-10-01 against the local `smart_lost_found` database with PostgreSQL 18.6 and vector 0.8.6. Schema creation committed successfully, and every verification assertion passed: ten tables, 49 columns, ten primary keys, thirteen foreign keys, both VECTOR(384) columns, and the approved nullability and HANDOVER uniqueness.
-
-## Deliberately deferred
-
-IDs use INT with no automatic generation. No defaults, cascades, permanent sample data, or embedding generation are included. Value rules and extra uniqueness were added later — see [Integrity constraints](#integrity-constraints-check-and-unique). PostgreSQL supplies the indexes required by primary keys and the HANDOVER Claim_ID unique constraint. Foreign keys use PostgreSQL's default NO ACTION behavior; no cascade policy has been added.
-
-HANDOVER Claim_ID is NOT NULL, UNIQUE, and an FK to CLAIM. Every handover references one claim, and each claim can have at most one handover; claims without a handover remain possible.
-
-## Report detail views
-
-After the schema exists, run:
+Run from the repository root as the database owner (`postgres`), against a new, empty database. PostgreSQL can prompt for the password, or use `%APPDATA%\postgresql\pgpass.conf`; never put passwords in commands or files.
 
 ```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/views.sql
+createdb -h localhost -U postgres smart_lost_found
+$scripts = @('vector_setup.sql', 'schema.sql', 'views.sql', 'functions.sql', 'triggers.sql', 'indexes.sql',
+             'vector_search.sql', 'roles.sql', 'security_functions.sql', 'procedures.sql', 'admin_reports.sql',
+             'verify.sql', 'verify_roles.sql', 'seed.sql')
+foreach ($script in $scripts) {
+    psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f "db/$script"
+    if ($LASTEXITCODE -ne 0) { throw "Database setup failed: $script" }
+}
+psql -X -h localhost -U postgres -d smart_lost_found -c "\password lf_web"
+psql -X -h localhost -U postgres -d smart_lost_found -c "\password lf_admin_web"
 ```
 
-`public.v_lost_report_details` and `public.v_found_report_details` expose the report IDs, user/category/location IDs, item name, description, report date, and status, together with Category_Name, Location_Name, and Building. Neither view exposes Embedding or Password_Hash.
+The two `\password` commands set the application logins' passwords interactively (the SQL never contains them). Put the resulting connection URLs in `.env.local` (see `.env.example`). Then provision the first ADMIN account (`npm run provision:admin`, README) and fill embeddings (`npm run db:backfill-embeddings`).
 
-The found-report view also returns a BIGINT Photo_Count. Photos are grouped by Found_ID before being left joined, producing one row per found report even with multiple photos; reports without photos return a count of zero. Category and location joins use their primary keys and the reports' required foreign keys, preserving one row per report.
+`schema.sql`, `indexes.sql` and the HNSW part of `vector_search.sql` are one-time creation scripts and fail if their objects already exist. Every other script is rerunnable. `seed.sql` must only be run once, on an empty database.
 
-These views demonstrate the college requirements for views (sections 5 and 7), joins, and GROUP BY/COUNT aggregation (section 6). The script uses explicit output columns, runs in a transaction, and can be rerun with CREATE OR REPLACE VIEW. It changes no table definitions or data.
-
-## Claim summary stored function
-
-After the schema exists, run:
+## Migrating an existing database (created before 2026-10-31)
 
 ```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/functions.sql
+foreach ($script in @('vector_setup.sql', 'constraints.sql', 'referential_actions.sql', 'functions.sql',
+                      'roles.sql', 'security_functions.sql', 'procedures.sql', 'admin_reports.sql',
+                      'verify.sql', 'verify_roles.sql')) {
+    psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f "db/$script"
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $script" }
+}
 ```
 
-`public.get_claim_summary(p_claim_id INTEGER)` is a read-only SQL function declared STABLE and SECURITY INVOKER. It returns exactly Claim_ID, Found_ID, Evidence_Count (BIGINT), and Handover_ID using CLAIM, CLAIM_EVIDENCE, and HANDOVER. An existing claim without evidence returns a count of zero; a claim without handover returns a NULL Handover_ID. An unknown claim returns no row. Evidence is counted in a correlated aggregate, so multiple evidence rows do not duplicate the result. The existing unique HANDOVER Claim_ID ensures at most one handover row per claim.
+None of these scripts inserts, updates or deletes rows. The migration path and the fresh-install path were compared object by object (columns, defaults, constraints, indexes, views, routines, ACLs, policies, triggers): the 240 catalog entries were identical. **Back up first** (`pg_dump -Fc` and `pg_dumpall --globals-only`, kept outside the repository) and see *Recovery* below.
 
-Example (replace 1 with an existing claim ID):
+## pgvector setup (`vector_setup.sql`)
 
-```sql
-SELECT "Claim_ID", "Found_ID", "Evidence_Count", "Handover_ID"
-FROM public.get_claim_summary(1);
-```
+`CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public VERSION '0.8.6'`, after checking for PostgreSQL 18, an allowed database name and that pgvector 0.8.6 is installed on the server (clear errors otherwise). The rest of the vector design is split by purpose:
 
-This demonstrates stored functions under college requirement section 7, with a reusable parameterized query, a LEFT JOIN, a subquery, and COUNT aggregation under section 6. It does not change data or determine claim approval or ownership. SECURITY INVOKER uses the caller's permissions rather than the function owner's. The creation script uses a transaction and CREATE OR REPLACE FUNCTION for repeat execution with the same signature.
+| Step | Script | Object |
+| --- | --- | --- |
+| 1 | `vector_setup.sql` | extension `vector` (type, `<=>` operator, HNSW method) |
+| 2 | `schema.sql` | `"Embedding" VECTOR(384)` in LOST_REPORT and FOUND_REPORT |
+| 3 | `triggers.sql` | `invalidate_report_embedding` clears a stale vector when the text changes |
+| 4 | `vector_search.sql` | `find_potential_matches` (exact cosine ranking) and two HNSW `vector_cosine_ops` indexes |
+| 5 | `lib/semantic-search.ts` | approximate nearest-neighbour search that uses the HNSW indexes |
+| 6 | `procedures.sql` | `delete_own_report` (vector DELETE with its report) |
 
-## Transaction demonstration
+## Schema refinements (revision 2026-10-31)
 
-Run `db/transactions.sql` with psql against the empty local demonstration database, after the schema exists and without concurrent application writes:
+### Referential actions and defaults (`referential_actions.sql`)
 
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -f db/transactions.sql
-```
+| Foreign key | ON DELETE | Why |
+| --- | --- | --- |
+| `MATCHES.Lost_ID`, `MATCHES.Found_ID` | CASCADE | A match is a derived association between two reports; it has no meaning without both. |
+| `FOUND_PHOTOS.Found_ID` | CASCADE | Photos map a multivalued attribute of the found report. |
+| every other FK (CLAIM, CLAIM_EVIDENCE, HANDOVER, reports→USER/CATEGORY/LOCATION) | NO ACTION | Claims, evidence and receipts are history: deleting a report can never delete them. A found report with claims therefore cannot be deleted at all. |
 
-The script checks the database name and refuses to run if any application table already contains data. It creates the minimal USER, CATEGORY, LOCATION, and FOUND_REPORT prerequisites using test IDs, then demonstrates two explicit CLAIM + CLAIM_EVIDENCE transactions. No status values are supplied.
+`CLAIM."Claim_Date"` and `HANDOVER."Handover_Date"` have `DEFAULT CURRENT_DATE`. The application no longer sends these columns, and `lf_user` has no INSERT privilege on them, so a client cannot backdate a claim or receipt.
 
-The successful BEGIN/INSERT/COMMIT sequence persists one claim and two evidence rows together, which are checked after COMMIT. The failure example inserts another claim and valid evidence before deliberately duplicating the evidence composite primary key. The expected unique_violation (SQLSTATE 23505) aborts that entire transaction; explicit ROLLBACK removes both the claim and its evidence. The script briefly disables psql ON_ERROR_STOP only for the deliberate failing insertion so it can reach ROLLBACK, then restores error stopping.
+The migration uses literal statements (`ALTER TABLE public."MATCHES" DROP CONSTRAINT ..., ADD CONSTRAINT ... ON DELETE CASCADE;` in one statement, so the table is never without its FK), each guarded by a psql `\if` catalog check so it can be rerun.
 
-Atomicity prevents a failed claim submission from leaving a partial claim/evidence record. This demonstrates transactions under college requirement section 7, INSERT/DELETE operations under section 6, and consistency/integrity under section 12. It uses no stored procedure and changes no database objects.
+### Integrity constraints (CHECK and UNIQUE, `constraints.sql`)
 
-Finally, the script deletes only its test-ID rows in dependency order and verifies all ten application tables are empty again. It prints three verification booleans and exits unsuccessfully if a check fails. The duplicate-key error is expected; a completed successful run ends with `PASS: commit, atomic rollback, and cleanup verified.` Run the file to completion: prerequisites and the success example are committed temporarily and are removed by the final cleanup transaction.
-
-## Embedding-invalidation triggers
-
-After the schema exists, run:
-
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/triggers.sql
-```
-
-`public.invalidate_report_embedding()` is a reusable PL/pgSQL trigger function attached through `trg_lost_report_invalidate_embedding` and `trg_found_report_invalidate_embedding`. Both are row-level BEFORE UPDATE OF Item_Name, Description triggers. If either text value actually changes, the function sets only NEW.Embedding to NULL. IS DISTINCT FROM handles changes to or from NULL correctly. Assigning the same text values preserves the embedding; unrelated-column updates and INSERT operations are unaffected.
-
-A stale vector represents an older item description and can produce misleading similarity results. Clearing it makes the missing embedding explicit. The trigger does not run the model, generate vectors, create matches, or approve/reject claims. If changed text and an embedding are supplied in the same update, that embedding is cleared too; a recomputed embedding needs a separate update.
-
-The application's **Edit report** workflow (`/my-reports/edit`, `lib/report-writes.ts` `updateReport`) relies on exactly this behaviour. It generates the new vector before opening a transaction, then inside one transaction: locks the owned row with `SELECT … FOR UPDATE`, runs `UPDATE … SET "Item_Name", "Description", …` (the trigger fires and sets `Embedding` to NULL when the text changed), and finally runs a second `UPDATE … SET "Embedding" = $vector`. A failure at any step rolls back both statements, so the report never keeps stale text/vector pairs. An external text update made outside the application (e.g. in psql) still leaves `Embedding` NULL until the report is edited in the app or the backfill script below is run.
-
-This demonstrates the college trigger requirement (section 7) and data consistency/integrity (section 12), while supporting the documented vector design (section 8). The creation script is transactional and repeatable and does not change columns, constraints, views, existing functions, or indexes. Verification uses temporary report rows inside a transaction followed by ROLLBACK.
-
-## Relational B-tree indexes
-
-After the schema exists, run this one-time creation script:
-
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/indexes.sql
-```
-
-`idx_claim_found_id` indexes CLAIM(Found_ID), supporting retrieval of claims for a found item. `idx_matches_found_id` indexes MATCHES(Found_ID), supporting retrieval of recorded potential matches from the found-report side. MATCHES already has a composite primary-key index on (Lost_ID, Found_ID); the separate Found_ID-leading index directly supports searches that do not specify Lost_ID.
-
-PostgreSQL automatically creates indexes for primary keys and UNIQUE constraints, but not for referencing foreign-key columns: the appropriate index depends on the workload. These two non-unique B-tree indexes supplement the existing constraint indexes without duplicating them or changing referential integrity. They demonstrate indexing under college requirements sections 5 and 7. No vector indexes are included.
-
-Representative read-query plans can be inspected without adding data:
-
-```sql
-EXPLAIN SELECT "Claim_ID", "User_ID", "Found_ID"
-FROM public."CLAIM" WHERE "Found_ID" = 1;
-
-EXPLAIN SELECT "Lost_ID", "Found_ID", "Match_Score"
-FROM public."MATCHES" WHERE "Found_ID" = 1;
-```
-
-The optimizer may choose sequential scans on empty or small tables; that is acceptable and does not imply the indexes are invalid. The creation script runs in one transaction and intentionally fails if either index name already exists, rather than silently accepting a potentially incorrect existing definition.
-
-## Semantic similarity search
-
-After the schema exists, run:
-
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/vector_search.sql
-```
-
-The approved embedding input is Item_Name + Description, encoded by the application's Transformers.js distribution of all-MiniLM-L6-v2 into 384 dimensions. LOST_REPORT and FOUND_REPORT store the vectors in their existing VECTOR(384) columns. Dimensionality validates vector shape, not the model that produced it; the application uses the same model for both report types. This SQL script generates no embeddings.
-
-`public.find_potential_matches(p_lost_id INTEGER, p_limit INTEGER)` is a STABLE, SECURITY INVOKER, read-only function returning Found_ID, Item_Name, Description, and DOUBLE PRECISION Cosine_Similarity. It retrieves the lost report's existing vector, returns no candidates for an unknown report or a NULL/zero-norm query vector, and excludes NULL/zero-norm found vectors. It computes cosine distance with pgvector's `<=>` operator and returns similarity as `1 - distance`. All eligible distances are materialized before sorting in ascending distance order, with Found_ID breaking ties, and applying the supplied limit. This keeps the function exact even when approximate indexes exist.
-
-Example (replace 1 with a report ID whose embedding has been populated):
-
-```sql
-SELECT "Found_ID", "Item_Name", "Description", "Cosine_Similarity"
-FROM public.find_potential_matches(1, 10);
-```
-
-`p_limit = 0` returns no rows. A NULL or negative limit raises invalid_parameter_value (SQLSTATE 22023); no fixed maximum, similarity threshold, or status filter is imposed. Similarity is returned at floating-point precision and is not saved into MATCHES.Match_Score.
-
-The file's second transaction creates only `idx_lost_report_embedding_hnsw` and `idx_found_report_embedding_hnsw`, using HNSW with vector_cosine_ops. These optional approximate indexes support direct queries ordered by the cosine-distance operator with a LIMIT; they do not accelerate the materialized exact-ranking function. The found index supports lost-to-found retrieval, while the lost index supports the reverse direction in a later query. HNSW trades recall for speed; the exact function remains the baseline for comparisons. Existing relational indexes are preserved. Index creation is one-time and fails if an index name already exists.
-
-Results are potential matches only: similar descriptions cannot prove ownership or approve a claim. The function performs no writes, creates no MATCHES rows, and does not change reports, claim decisions, or handover records. This demonstrates vector similarity search and retrieval documentation under college requirements sections 7 and 8, plus indexing under sections 5 and 7.
-
-## Embedding backfill (data only, no schema change)
-
-`seed.sql` deliberately leaves `Embedding` NULL. To make Potential Matches demonstrable for the seeded reports, run:
-
-```powershell
-npm run db:backfill-embeddings -- --dry-run   # count rows only
-npm run db:backfill-embeddings                # write
-```
-
-`scripts/backfill-embeddings.mjs` checks that it is connected to `smart_lost_found`, selects only rows whose `Embedding IS NULL`, encodes `Item_Name + "\n" + Description` with the same model and options as `lib/embedding.ts` (all-MiniLM-L6-v2, mean pooling, normalized, 384 values), and writes every vector in **one transaction**. Each `UPDATE` repeats `"Embedding" IS NULL` and the original text in its `WHERE` clause, so a row edited meanwhile is skipped rather than given a stale vector. Updating only `Embedding` does not fire the invalidation trigger (it watches `Item_Name`/`Description`). The script is idempotent: a second run finds nothing to do.
-
-It was run on the local development database on 2026-10-16 and stored 16 embeddings (8 lost, 8 found); afterwards every seeded lost report's top `find_potential_matches(…, 1)` result was its intended found counterpart (cosine similarity 0.64–0.85), even where the wording differs (e.g. "Phone in navy cover" → "Black mobile with blue case").
-
-## Integrity constraints (CHECK and UNIQUE)
-
-**Requirement vs. design choice.** The college brief asks the design to identify "appropriate constraints" (§4), the SQL implementation to demonstrate constraints (§5), and "input validation … at the database level" (§12). It does **not** require CHECK constraints specifically. Until 2026-10-16 the database enforced only keys, NOT NULL foreign keys and `HANDOVER.Claim_ID UNIQUE`, while every value rule lived in the application. The following constraints were then added as an *optional design improvement* that moves rules the application already depends on into PostgreSQL. Each one closes a real gap; none changes a column, type, relationship or nullability, and no new status vocabulary or business rule was invented.
+**Requirement vs. design choice.** The college brief asks the design to identify "appropriate constraints" (§4), the SQL implementation to demonstrate constraints (§5), and "input validation … at the database level" (§12). These named constraints move rules the application already depends on into PostgreSQL. None changes a column, type, relationship or nullability, and no status vocabulary was invented.
 
 | Constraint | Rule | Why it is needed |
 | --- | --- | --- |
-| `USER_Role_check` | `CHECK ("Role" IN ('USER', 'ADMIN'))` | Authorization trusts this column; any other value would silently become "no access". NULL is still allowed, as approved. |
-| `USER_Email_key` | `UNIQUE ("Email")` | Sign-in looks users up by email; two accounts sharing an email would both be locked out. PostgreSQL allows multiple NULL emails. |
-| `LOST_REPORT_Item_Name_check`, `FOUND_REPORT_Item_Name_check` | `CHECK (btrim("Item_Name") <> '')` | A whitespace-only name cannot be searched or recognised. NULL stays allowed. |
-| `CLAIM_EVIDENCE_Evidence_No_check` | `CHECK ("Evidence_No" >= 1)` | Domain of the weak entity's partial key; the application numbers evidence 1, 2, 3 … per claim. |
-| `CLAIM_User_ID_Found_ID_key` | `UNIQUE ("User_ID", "Found_ID")` | One claim per user per found item. The claim action already enforces this under a row lock; the constraint is the database backstop (its violation is reported as "You have already claimed this found report."). |
+| `USER_Role_check` | `CHECK ("Role" IN ('USER', 'ADMIN'))` | Authorization trusts this column. |
+| `USER_Email_key` | `UNIQUE ("Email")` | Sign-in looks users up by email. Race-safe duplicate detection for registration. |
+| `USER_Email_format_check` (2026-10-31) | basic shape: one `@`, no spaces, a dot in the domain | Accounts are also provisioned from the terminal; this is a simple shape check, **not** full RFC 5322 email validation. The application validates too. |
+| `USER_Email_lowercase_check` (2026-10-31) | `"Email" = lower(btrim("Email"))` | Emails are stored normalised, so `USER_Email_key` also rejects case variants. |
+| `LOST_REPORT_Item_Name_check`, `FOUND_REPORT_Item_Name_check` | `CHECK (btrim("Item_Name") <> '')` | A whitespace-only name cannot be searched or recognised. |
+| `CLAIM_EVIDENCE_Evidence_No_check` | `CHECK ("Evidence_No" >= 1)` | Domain of the weak entity's partial key. |
+| `CLAIM_User_ID_Found_ID_key` | `UNIQUE ("User_ID", "Found_ID")` | One claim per user per found item. |
 
-**Considered and rejected:** a `Match_Score` range (column unused, meaning undefined); a `Status` value list (no approved vocabulary); "date not in the future" (depends on `CURRENT_DATE`, which is not allowed in a CHECK constraint; enforced by the application instead); "handover not before claim" and "one handover per found item" (span two tables, so they cannot be CHECK constraints; the latter is enforced by the `FOUND_REPORT` row lock in `app/actions/handover.ts`); non-blank description/evidence/signature (low value; the application already requires them).
+**Considered and rejected:** a `Match_Score` range (column unused), a `Status` value list (no approved vocabulary), "date not in the future" (`CURRENT_DATE` is not allowed in a CHECK; enforced by the application), phone format (seed data uses fictional `+91-DEMO-…` values; validated by registration instead).
 
-**Installation.** `schema.sql` declares the constraints for fresh installs. Existing databases use the migration:
+The migration first checks every rule against the existing rows and stops with a list of conflicts — it never edits or deletes data — then adds each constraint only if it is missing.
 
-```powershell
-psql -X -h localhost -U postgres -d smart_lost_found -v ON_ERROR_STOP=1 -f db/constraints.sql
+## Database-level RBAC (`roles.sql`, `security_functions.sql`)
+
+| Role | Kind | Purpose |
+| --- | --- | --- |
+| `lf_anon` | NOLOGIN privilege role | public visitor: CATEGORY, LOCATION and public report columns (no `User_ID`), auth/registration functions |
+| `lf_user` | NOLOGIN privilege role, inherits `lf_anon` | signed-in USER (and ADMIN acting as a user): own reports, claims, evidence and receipts |
+| `lf_admin` | NOLOGIN privilege role | read-only campus analytics through `admin_*` objects only; **not** a member of `lf_user` |
+| `lf_auth` | NOLOGIN owner | owns `auth_credentials`, `auth_session_user`, `register_user` |
+| `lf_reporting` | NOLOGIN owner | owns `found_report_has_handover`, `found_report_claim_count`, `admin_*` views, `admin_daily_activity` |
+| `lf_web` | LOGIN, NOINHERIT, CONNECTION LIMIT 20 | every web request; may `SET ROLE` to `lf_anon` or `lf_user` only |
+| `lf_admin_web` | LOGIN, NOINHERIT, CONNECTION LIMIT 10, `default_transaction_read_only = on` | admin analytics only; may `SET ROLE` to `lf_admin` only |
+
+No role is a superuser or has CREATEROLE, CREATEDB, REPLICATION or BYPASSRLS. Memberships use PostgreSQL 16+ options (`WITH INHERIT FALSE, SET TRUE`): a login has **no** table privileges until `lib/db.ts` sets the role for the current transaction, so a query that skipped the wrapper fails. `lf_web` is not a member of `lf_admin`, so nothing done through the web login — not even an injected `SET ROLE` — can reach admin privileges.
+
+**PUBLIC** loses CONNECT/TEMP on the database, USAGE on schema `public`, and EXECUTE on every project function (revoked by name, because a blanket revoke would also hit pgvector's own functions).
+
+**Grants (summary).** Column-level where it matters: anonymous users cannot read report owner IDs; nobody but `lf_auth` can read `"USER"` (and only its ID, name, email, role and hash columns); `lf_user` may update only report text/category/location/date/embedding columns, cannot insert `Claim_Date`/`Handover_Date`, and has no UPDATE/DELETE on HANDOVER (receipts are history) and no TRUNCATE anywhere. `UPDATE ("Status")` on CLAIM exists only because PostgreSQL requires UPDATE privilege for `SELECT … FOR UPDATE` locks; RLS limits it to the caller's own claims and the application never updates CLAIM.
+
+**Row-Level Security** on LOST_REPORT, FOUND_REPORT, CLAIM, HANDOVER and CLAIM_EVIDENCE (19 policies). "Owner" means `"User_ID" = app_current_user_id()`, the transaction-local identity that `lib/db.ts` sets from the server-verified session (never a browser field).
+
+- Reports: anyone may read; only the owner may insert, update or delete. FOUND_REPORT's UPDATE policy is `USING (true) WITH CHECK (owner)`: claim, evidence and handover transactions lock another user's found report with `SELECT … FOR UPDATE`, and row locks check only `USING`; a real UPDATE must pass `WITH CHECK`, so only the owner can change it.
+- Claims, evidence and receipts are visible only to the claimant. Cross-user questions go through two narrow helpers: `found_report_has_handover(id)` (a fact already shown publicly as "Returned") and `found_report_claim_count(id)` (answered only for the found report's owner).
+- `lf_reporting` has explicit read policies (a NOLOGIN owner role does **not** bypass RLS).
+
+**SECURITY DEFINER functions** each have a NOLOGIN owner with only the privileges it needs, `SET search_path = pg_catalog, pg_temp`, schema-qualified names, no dynamic SQL, and EXECUTE for named roles only:
+
+- `auth_credentials(email)` → `User_ID`, `Role`, `Password_Hash` for one exact normalised email (Argon2id verification stays in Node.js).
+- `auth_session_user()` → takes **no argument**; returns `User_ID`, `Name`, `Role` for `app.user_id` only, so it cannot be used to enumerate users and returns no email/phone/hash.
+- `register_user(name, email, phone, password_hash)` → INSERT only, with the constant role `'USER'` (there is no role parameter), refuses anything that is not an Argon2id hash, normalises the email, retries only on a primary-key collision, and lets `USER_Email_key` report duplicates race-safely.
+
+`verify_roles.sql` (read-only) checks role attributes, the four memberships and their options, 43 table/column and 18 EXECUTE privileges (allowed and denied), the absence of PUBLIC privileges, the 19 policies, and the owners/search_path of every SECURITY DEFINER routine.
+
+## Accounts
+
+Public registration (`/register`) always creates a USER through `register_user`. ADMIN accounts are created only from a terminal with the owner connection: `npm run provision:admin -- --name "…" --email … [--generate-password --credentials-file .local/demo-credentials.txt]` (`scripts/provision-account.mjs`). It refuses an existing email and never updates, replaces or deletes an account.
+
+## Stored procedures (`procedures.sql`)
+
+Both are `SECURITY INVOKER` (grants and RLS still apply), take their identity from `app_current_user_id()`, never COMMIT (they are atomic with the caller's transaction), and are called by the application with `CALL`:
+
+- `withdraw_claim(p_claim_id, OUT p_removed_evidence)` — locks FOUND_REPORT then CLAIM (the same order as evidence and handover, so they cannot deadlock), refuses after a handover (`LF409`), deletes the evidence rows, then the claim. Foreign or missing claims raise `LF404`. Called by `withdrawClaim` in `app/actions/claim.ts`.
+- `delete_own_report(p_report_type, p_report_id)` — owner-only. A lost report is deleted with its MATCHES rows (CASCADE). A found report is locked (the same lock `createClaim` takes first) and refused with `LF409` if anyone has claimed it; otherwise it is deleted with its photos and matches. The report's embedding is a column of the deleted row, so the vector is removed too. Called by `deleteReport` in `app/actions/report-delete.ts`.
+
+## Campus analytics (`admin_reports.sql`)
+
+Owned by `lf_reporting`, readable only by `lf_admin`, used by `/admin/campus-summary`:
+
+- `admin_campus_totals` — four independent counts (scalar subqueries).
+- `admin_reports_by_category`, `admin_reports_by_location` — ordinary CTE (`WITH reports AS (… UNION ALL …)`), LEFT JOIN, GROUP BY, `COUNT(*) FILTER`.
+- `admin_location_hotspots` — **HAVING** with a nested scalar subquery: locations whose lost + found count is above the campus average per location.
+- `admin_contested_items` — **HAVING `COUNT(DISTINCT "User_ID") >= 2`**: found items with competing claimants, with a correlated `EXISTS` showing whether one was handed over. No claimant identities.
+- `admin_daily_activity(p_days)` — **`WITH RECURSIVE`** calendar (anchor = first day, recursive member = day + 1, termination at today), LEFT JOINed to per-day counts, so quiet days appear as zeros. `p_days` must be 7–366 (SQLSTATE 22023).
+
+```sql
+SELECT * FROM public.admin_daily_activity(30);
+SELECT * FROM public.admin_location_hotspots ORDER BY total DESC;
+SELECT * FROM public.admin_contested_items;
 ```
 
-The migration first checks every rule against the existing rows and stops with a list of conflicts — it never edits or deletes data — then adds each constraint only if it is missing, so it is safe to rerun. On 2026-10-16 it was applied to the local database: all six constraints were added, a second run added nothing, and an MD5 fingerprint of every row in all ten tables was identical before and after. A rolled-back trial of `schema.sql` produced exactly the same 30 constraint definitions as the migrated database. `verify.sql` now expects 10 primary keys, 13 foreign keys, 3 UNIQUE and 4 CHECK constraints (30 in total), and `npm test` checks that each rule rejects invalid rows (SQLSTATE 23514/23505 with the constraint name) while accepting the valid boundary cases.
+## Report detail views (`views.sql`)
+
+`public.v_lost_report_details` and `public.v_found_report_details` expose report IDs, owner/category/location IDs, item name, description, report date and status, together with Category_Name, Location_Name and Building. Neither exposes Embedding or Password_Hash. The found-report view also returns a BIGINT Photo_Count (photos grouped by Found_ID before a LEFT JOIN, so one row per report). Anonymous and admin roles are granted every column except `User_ID`.
+
+## Claim summary function (`functions.sql`)
+
+`public.get_claim_summary(p_claim_id)` is a read-only SQL function (STABLE, SECURITY INVOKER) returning Claim_ID, Found_ID, Evidence_Count (correlated COUNT) and Handover_ID (LEFT JOIN). My Claims calls it with `CROSS JOIN LATERAL`. `functions.sql` also defines `app_current_user_id()`.
+
+## Transaction demonstration (`transactions.sql`)
+
+Run against an **empty** allowed database without concurrent writes. It creates minimal test-ID fixtures, commits a claim with two evidence rows, then shows that a duplicate evidence key (SQLSTATE 23505) followed by ROLLBACK removes both the claim and its first evidence row, cleans up, and verifies all ten tables are empty again. It runs as the owner connection.
+
+## Embedding-invalidation triggers (`triggers.sql`)
+
+`public.invalidate_report_embedding()` is attached to LOST_REPORT and FOUND_REPORT as row-level `BEFORE UPDATE OF "Item_Name", "Description"` triggers. If either text value actually changes (`IS DISTINCT FROM`), it sets `NEW."Embedding"` to NULL. The Edit report workflow (`lib/report-writes.ts` `updateReport`) generates the new vector before opening a transaction, then locks the owned row, runs the text UPDATE (the trigger clears the vector) and a second UPDATE storing the fresh vector — all in one transaction.
+
+## Relational B-tree indexes (`indexes.sql`)
+
+`idx_claim_found_id` (CLAIM.Found_ID) and `idx_matches_found_id` (MATCHES.Found_ID) supplement the indexes PostgreSQL creates for primary keys and UNIQUE constraints.
+
+## Similarity search and HNSW (`vector_search.sql`)
+
+Embeddings encode `Item_Name + "\n" + Description` with the application's Transformers.js distribution of all-MiniLM-L6-v2 (mean pooling, normalised, 384 values). `public.find_potential_matches(p_lost_id, p_limit)` returns found reports ranked by cosine similarity (`1 - (a <=> b)`); it materialises all distances before sorting, so it is an **exact** ranking. The file's second transaction creates `idx_lost_report_embedding_hnsw` and `idx_found_report_embedding_hnsw` (HNSW, `vector_cosine_ops`).
+
+The public "Similar meaning" search (`lib/semantic-search.ts`) is the query that uses them: each branch is `ORDER BY "Embedding" <=> $query LIMIT k` over one table, with iterative index scans enabled when filters are applied. With the real data set (tens of rows) PostgreSQL correctly prefers a sequential scan. `tests/vector-index.mjs` inserts 4,000 synthetic vectors per table inside a rolled-back transaction and confirms with `EXPLAIN (ANALYZE, BUFFERS)` that the same SQL then uses both HNSW indexes (recall@10 against exact ranking ≈ 83%; see the project report).
+
+## Embedding backfill
+
+`npm run db:backfill-embeddings` (`scripts/backfill-embeddings.mjs`) uses `MAINTENANCE_DATABASE_URL`, selects only rows whose `Embedding IS NULL`, encodes them with the same model settings as `lib/embedding.ts`, and writes every vector in one transaction (skipping any row whose text changed meanwhile). Updating only `Embedding` does not fire the invalidation trigger.
+
+## Demo database (`demo_seed.sql`)
+
+Fictional data relative to the run date: 8 extra lost and 9 extra found reports across categories and two extra locations, differently worded matching pairs, open and completed claims, evidence, handovers, a found item with two competing claimants, unclaimed reports and a claimed report that cannot be deleted. It needs `-v demo_user_email=…` (the provisioned demo USER) and refuses any database other than `smart_lost_found_demo`.
+
+## Verification
+
+- `verify.sql` (read-only): 10 tables, 49 columns (types, NOT NULL, the two defaults, both `VECTOR(384)`), 10 PKs, 13 FKs with their ON DELETE actions, 3 UNIQUE, 6 CHECK, 17 indexes (2 HNSW), 7 views and their owners, 10 functions and 2 procedures (SECURITY DEFINER settings, owners, search_path), both triggers, and RLS on exactly the five workflow tables.
+- `verify_roles.sql` (read-only): see *Database-level RBAC*.
+- `drop_demo.sql`: live CREATE / ALTER … ADD / ALTER … DROP COLUMN / FK-aware DROP TABLE demonstration on temporary tables only.
+
+## Recovery
+
+1. **Preferred:** restore the pre-migration backup — `pg_restore` the `pg_dump -Fc` file into a new database (roles from `pg_dumpall --globals-only` first), check it, and point `.env.local` at it.
+2. **In place:** `psql -X -v ON_ERROR_STOP=1 -d smart_lost_found -f db/roles_rollback.sql` disables RLS, drops the policies and the objects owned by `lf_auth`/`lf_reporting`, revokes every `lf_*` privilege and restores PostgreSQL's default PUBLIC privileges, without touching rows; add `-v drop_roles=1` after running it in every database to drop the roles. Then revert the RBAC application code and restore `DATABASE_URL` to the previous owner login. This was tested on the test clone (rollback → re-apply → both verifications pass, table fingerprints unchanged).
