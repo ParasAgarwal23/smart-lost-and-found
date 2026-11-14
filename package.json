@@ -11,7 +11,9 @@
     "test": "node tests/handover.mjs && node tests/rbac.mjs && node tests/features.mjs && node tests/vector-index.mjs",
     "test:browser": "node tests/handover.mjs --browser",
     "db:backfill-embeddings": "node scripts/backfill-embeddings.mjs",
-    "provision:admin": "node scripts/provision-account.mjs --role ADMIN"
+    "provision:admin": "node scripts/provision-account.mjs --role ADMIN",
+    "demo": "node scripts/demo-db.mjs",
+    "start:demo": "node scripts/demo-db.mjs next start"
   },
   "engines": {
     "node": ">=22.13.0"

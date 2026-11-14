@@ -70,9 +70,9 @@ app/
 components/            # Header/navigation, UI primitives, forms, icons, report form
 lib/                   # db (pools + roles), admin-db, auth, session, password, embedding, search, semantic-search, …
 db/                    # Setup, migrations, RBAC, security functions, procedures, analytics, verification, seeds
-scripts/               # provision-account.mjs (ADMIN provisioning), backfill-embeddings.mjs
+scripts/               # provision-account.mjs (ADMIN provisioning), backfill-embeddings.mjs, demo-db.mjs (demo database)
 tests/                 # support (isolated test DB), handover, rbac, features, vector-index, polish-browser
-docs/                  # Report, diagrams (.drawio + PNG), application screenshots (evidence logs and submission PDF/DOCX stay local, git-ignored)
+docs/                  # Report (Markdown; DOCX and PDF in submission/), diagrams (.drawio + PNG), application screenshots, demo setup
 ```
 
 ## Prerequisites
@@ -130,7 +130,7 @@ Each suite inserts temporary fixtures through the owner connection, removes them
 
 ### Demo database
 
-`smart_lost_found_demo` is a fresh install of the scripts plus `db/seed.sql`, two provisioned accounts (one ADMIN, one USER created through `register_user`) and `db/demo_seed.sql`; see [docs/demo_checklist.md](docs/demo_checklist.md). Demo credentials live only in the git-ignored `.local/demo-credentials.txt`.
+`smart_lost_found_demo` is a fresh install of the scripts plus `db/seed.sql`, provisioned accounts (one ADMIN, four USERs) and the rerunnable `db/demo_seed.sql`. `npm run start:demo` serves the production build against it without changing `.env.local`; setup, accounts and the demonstration path are in [docs/demo_setup.md](docs/demo_setup.md). Demo credentials live only in the git-ignored `.local/demo-credentials.txt`.
 
 ## Current limitations
 
@@ -144,5 +144,5 @@ Each suite inserts temporary fixtures through the owner connection, removes them
 
 - [College requirements](docs/DBMS%20Level%203%20Project%20Requirements.pdf)
 - [ER diagram](docs/lost_found_ER_diagram.drawio) ([PNG](docs/diagrams/er_diagram.png)) · [Relational schema](docs/lost_found_relational_schema.drawio) ([PNG](docs/diagrams/relational_schema.png)) · [Architecture](docs/architecture.drawio) ([PNG](docs/diagrams/architecture.png))
-- [Project report](docs/project_report.md)
-- [Database documentation](db/README.md) · [Demonstration checklist](docs/demo_checklist.md) · [Contribution matrix](docs/contribution_matrix.md)
+- [Project report](docs/project_report.md) ([DOCX](docs/submission/Smart_Lost_and_Found_DBMS_Report.docx) · [PDF](docs/submission/Smart_Lost_and_Found_DBMS_Report.pdf))
+- [Database documentation](db/README.md) · [Demonstration setup](docs/demo_setup.md) · [Demonstration checklist](docs/demo_checklist.md) · [Contribution matrix](docs/contribution_matrix.md)

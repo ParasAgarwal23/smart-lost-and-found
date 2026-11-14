@@ -10,7 +10,7 @@ The scripts create the ten relations in PostgreSQL's standard `public` schema. T
 | --- | --- |
 | `smart_lost_found` | The real application database. Never written by tests. |
 | `smart_lost_found_test` | Isolated clone for automated tests (`createdb -T smart_lost_found smart_lost_found_test`). |
-| `smart_lost_found_demo` | Fresh install from these scripts + demo data, used for the demonstration and screenshots. |
+| `smart_lost_found_demo` | Fresh install from these scripts + demo data (`demo_seed.sql`), used for the demonstration and screenshots; see [docs/demo_setup.md](../docs/demo_setup.md). |
 
 Every setup/migration script refuses to run unless `current_database()` is one of these three names (an explicit allowlist), and `db/demo_seed.sql` runs **only** in `smart_lost_found_demo`. The test suites go further: `tests/support.mjs` retargets every connection to `smart_lost_found_test` and stops unless all of them really reach it.
 
