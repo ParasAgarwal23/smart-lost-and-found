@@ -17,6 +17,9 @@ Thumbs.db
 # Local-only demo credentials and other private working files.
 /.local/
 
-# Local-only project artefacts (verification logs and the submission PDF/DOCX).
+# Local-only verification logs. Of docs/submission/ only the final report
+# (DOCX and PDF) is committed; anything else placed there stays local.
 /docs/evidence/
-/docs/submission/
+/docs/submission/*
+!/docs/submission/Smart_Lost_and_Found_DBMS_Report.docx
+!/docs/submission/Smart_Lost_and_Found_DBMS_Report.pdf

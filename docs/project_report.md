@@ -677,10 +677,14 @@ smart-lost-and-found/
 │   ├── screenshots/
 │   │   └── app/
 │   │       └── (15 application screenshots, PNG)
+│   ├── submission/
+│   │   ├── Smart_Lost_and_Found_DBMS_Report.docx
+│   │   └── Smart_Lost_and_Found_DBMS_Report.pdf
 │   ├── architecture.drawio
 │   ├── contribution_matrix.md
 │   ├── DBMS Level 3 Project Requirements.pdf
 │   ├── demo_checklist.md
+│   ├── demo_setup.md
 │   ├── lost_found_ER_diagram.drawio
 │   ├── lost_found_relational_schema.drawio
 │   └── project_report.md
@@ -703,6 +707,7 @@ smart-lost-and-found/
 │   └── .gitkeep
 ├── scripts/
 │   ├── backfill-embeddings.mjs
+│   ├── demo-db.mjs
 │   └── provision-account.mjs
 ├── tests/
 │   ├── features.mjs
