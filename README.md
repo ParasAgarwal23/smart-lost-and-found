@@ -93,8 +93,8 @@ npm ci
 
    | Variable | Value |
    | --- | --- |
-   | `DATABASE_URL` | `lf_web` login → `smart_lost_found` |
-   | `ADMIN_DATABASE_URL` | `lf_admin_web` login → `smart_lost_found` |
+   | `DATABASE_URL` | `lf_web` login → `smart_lost_found_demo` |
+   | `ADMIN_DATABASE_URL` | `lf_admin_web` login → `smart_lost_found_demo` |
    | `MAINTENANCE_DATABASE_URL` | owner login (scripts and tests only; never read by the app) |
    | `SESSION_SECRET` | random secret of at least 32 characters |
 
@@ -114,7 +114,7 @@ All test scripts run against the isolated clone **`smart_lost_found_test`** only
 
 ```powershell
 dropdb --if-exists -h localhost -U postgres smart_lost_found_test
-createdb -h localhost -U postgres -T smart_lost_found smart_lost_found_test
+createdb -h localhost -U postgres -T smart_lost_found_demo smart_lost_found_test
 ```
 
 ```sh
@@ -130,7 +130,7 @@ Each suite inserts temporary fixtures through the owner connection, removes them
 
 ### Demo database
 
-`smart_lost_found_demo` is a fresh install of the scripts plus `db/seed.sql`, provisioned accounts (one ADMIN, four USERs) and the rerunnable `db/demo_seed.sql`. `npm run start:demo` serves the production build against it without changing `.env.local`; setup, accounts and the demonstration path are in [docs/demo_setup.md](docs/demo_setup.md). Demo credentials live only in the git-ignored `.local/demo-credentials.txt`.
+`smart_lost_found_demo` is the application's single database: a fresh install of the scripts plus `db/seed.sql`, provisioned accounts (one ADMIN, four USERs) and the rerunnable `db/demo_seed.sql`. `.env.local` points at it (`npm start`); `npm run start:demo` forces it for one command. Setup, backups, accounts and the demonstration path are in [docs/demo_setup.md](docs/demo_setup.md). Demo credentials live only in the git-ignored `.local/demo-credentials.txt`.
 
 ## Current limitations
 

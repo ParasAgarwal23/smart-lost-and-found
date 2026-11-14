@@ -3,9 +3,9 @@
 // Safety: every connection is retargeted to the isolated database
 // smart_lost_found_test, whatever .env.local says, and assertIsolated() refuses
 // to continue unless all three connections really reach it. The tests can
-// therefore never write to smart_lost_found. Create the test database as a
-// clone first (see README "Testing"):
-//   createdb -T smart_lost_found smart_lost_found_test
+// therefore never write to the application database smart_lost_found_demo.
+// Create the test database as a clone first (see README "Testing"):
+//   createdb -T smart_lost_found_demo smart_lost_found_test
 //
 // Connections (the same variables as the application):
 //   DATABASE_URL              lf_web       production modules (USER/anonymous)

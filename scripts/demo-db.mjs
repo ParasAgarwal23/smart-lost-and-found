@@ -2,9 +2,9 @@
 //   npm run demo -- npm start
 //   npm run demo -- npm run db:backfill-embeddings
 //   npm run demo -- psql -X -v ON_ERROR_STOP=1 -v demo_user_email=... -f db/demo_seed.sql
-// .env.local is read but never changed: only the database name in the three
-// connection URLs is swapped for this command, so `npm run dev` and `npm start`
-// keep using smart_lost_found. psql receives the owner connection through the
+// .env.local is read but never changed: the database name in the three
+// connection URLs is set to smart_lost_found_demo for this command, whatever
+// .env.local names. psql receives the owner connection through the
 // standard PG* variables of the child process (no password on the command line).
 import nextEnv from '@next/env';
 import { spawn } from 'node:child_process';

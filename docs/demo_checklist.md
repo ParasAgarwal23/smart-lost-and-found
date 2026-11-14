@@ -4,7 +4,7 @@ Use with the [project report](project_report.md). Never put passwords on slides,
 
 ## Before the presentation
 
-- [ ] Run the demo against **`smart_lost_found_demo`** (fictional data), not the real database: `npm run build`, then `npm run start:demo` (`.env.local` is not changed). Setup and refresh steps are in [demo_setup.md](demo_setup.md).
+- [ ] Run the demo against **`smart_lost_found_demo`** (fictional data, the only project database): `npm run build`, then `npm start` (or `npm run start:demo`). Setup, backup and restore steps are in [demo_setup.md](demo_setup.md).
 - [ ] Demo accounts (one ADMIN, four USERs) and their generated passwords are in the git-ignored `.local/demo-credentials.txt`.
 - [ ] Back up the demo database (`pg_dump -Fc`, outside the repository) so it can be restored after the demonstration.
 - [ ] Check `npm run demo -- npm run db:backfill-embeddings -- --dry-run` reports nothing to do.

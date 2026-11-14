@@ -1,17 +1,18 @@
 # Demonstration setup
 
-The live demonstration runs against **`smart_lost_found_demo`**, a separate database on the same PostgreSQL server with the same schema, roles and policies as `smart_lost_found`. All of its people, items and places are fictional. `smart_lost_found` (the normal application database) is not used for the demonstration and is never written by the demo scripts.
+The application and the demonstration use one database: **`smart_lost_found_demo`**. All of its people, items and places are fictional. `.env.local` points all three connection URLs (`DATABASE_URL`, `ADMIN_DATABASE_URL`, `MAINTENANCE_DATABASE_URL`) at it. The project's original database, `smart_lost_found`, was retired on 14 Nov 2026; it exists only as a backup archive outside the repository and is not an application option.
 
-## Pointing the application at the demo database
+## Starting the application and checking its database
 
-`.env.local` stays unchanged and keeps pointing at `smart_lost_found`. The wrapper `scripts/demo-db.mjs` runs one command with the database name in all three connection URLs swapped to `smart_lost_found_demo` (and gives `psql` the owner connection through `PG*` variables):
+`npm run dev` and `npm start` read `.env.local`. The wrapper `scripts/demo-db.mjs` (`npm run demo -- <command>`, `npm run start:demo`) sets the database name to `smart_lost_found_demo` for one command whatever `.env.local` says, and gives `psql` the owner connection through `PG*` variables.
 
 | Purpose | Command |
 | --- | --- |
-| Check which database the wrapper reaches (must print `smart_lost_found_demo`) | `npm run demo -- psql -X -At -c "SELECT current_database()"` |
-| Start the production build against the demo database | `npm run build`, then `npm run start:demo` (<http://localhost:3000>) |
-| Any other command against the demo database | `npm run demo -- <command>`, e.g. `npm run demo -- psql` |
-| Normal use (unchanged) | `npm run dev` / `npm start` → `smart_lost_found` |
+| Check the database named in `.env.local` (must print `/smart_lost_found_demo`) | `node -e "require('@next/env').loadEnvConfig('.'); console.log(new URL(process.env.DATABASE_URL).pathname)"` |
+| Check the database PostgreSQL connects to (must print `smart_lost_found_demo`) | `npm run demo -- psql -X -At -c "SELECT current_database()"` |
+| Start the production build | `npm run build`, then `npm start` (or `npm run start:demo`), <http://localhost:3000> |
+| Development server | `npm run dev` |
+| Any other command with the owner connection | `npm run demo -- <command>`, e.g. `npm run demo -- psql` |
 
 ## Demo accounts
 
@@ -38,7 +39,25 @@ Emails and generated passwords are only in the git-ignored `.local/demo-credenti
    The script stops unless it is connected to `smart_lost_found_demo` and the three emails belong to three different USER accounts. Dates are relative to the day a row is first inserted, so the last-30-days timeline has activity. Running it again re-inserts a seed row only if that row was deleted (for example a report removed while demonstrating deletion); it never changes or removes existing rows. The backfill embeds only reports whose `Embedding` is NULL, with the application's model (`Xenova/all-MiniLM-L6-v2`, 384 dimensions).
 3. **Check:** `npm run demo -- npm run db:backfill-embeddings -- --dry-run` reports nothing to do, and `npm run demo -- psql -X -f db/verify.sql` and `npm run demo -- psql -X -f db/verify_roles.sql` pass.
 
-A live demonstration adds real rows (a claim, evidence, a receipt, a new account), and the receipt closes the pencil-case item for further claims. To get back to the prepared state, restore the backup taken before the demonstration (`pg_dump -Fc` of `smart_lost_found_demo`, kept outside the repository) into a freshly created `smart_lost_found_demo` and grant `CONNECT` again as in step 1. This is a manual, deliberate step; no script deletes demo data. To rehearse without touching the demo data, copy it first (`createdb -T smart_lost_found_demo <copy>` while nothing is connected) and run the application against the copy.
+A live demonstration adds real rows (a claim, evidence, a receipt, a new account), and the receipt closes the pencil-case item for further claims. To return to the prepared state, restore the final backup (below). To rehearse without touching the demo data, copy it first (`createdb -T smart_lost_found_demo <copy>` while nothing is connected) and run the application against the copy.
+
+## Backups and restoring the prepared state
+
+Verified backups are kept outside the repository, in `..\smart-lost-and-found-backups\` (next to the project folder). They contain password hashes and must never be committed:
+
+| File | Contents |
+| --- | --- |
+| `smart_lost_found_demo_final.dump` | `smart_lost_found_demo` as prepared for the demonstration |
+| `smart_lost_found_original_archive.dump` | the retired original database (archive only; never point the application at it) |
+
+To restore the prepared state, stop the application, then run as the owner (this deliberately replaces the current demo data; the `lf_*` roles are server-wide and must already exist):
+
+```powershell
+dropdb -h localhost -U postgres smart_lost_found_demo
+createdb -h localhost -U postgres smart_lost_found_demo
+pg_restore -h localhost -U postgres -d smart_lost_found_demo --exit-on-error ..\smart-lost-and-found-backups\smart_lost_found_demo_final.dump
+psql -X -h localhost -U postgres -d smart_lost_found_demo -c "REVOKE ALL ON DATABASE smart_lost_found_demo FROM PUBLIC" -c "GRANT CONNECT ON DATABASE smart_lost_found_demo TO lf_web, lf_admin_web"
+```
 
 ## Suggested demonstration path
 
