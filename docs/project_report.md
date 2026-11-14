@@ -578,7 +578,7 @@ The browser talks only to the Next.js server. Server Components read data and Se
 
 ## 31. Next.js project structure
 
-Generated from the repository's file list (`git ls-files --cached --others --exclude-standard`); screenshot and evidence folders are summarised.
+Generated from the repository's file list (`git ls-files --cached --others --exclude-standard`); the screenshot folder is summarised. Dependencies, build output and the git-ignored local folders are not listed.
 
 ```text
 smart-lost-and-found/
@@ -598,6 +598,8 @@ smart-lost-and-found/
 │   │       ├── loading.tsx
 │   │       └── page.tsx
 │   ├── claim/
+│   │   ├── evidence/
+│   │   │   ├── evidence-form.tsx
 │   │   │   └── page.tsx
 │   │   ├── handover/
 │   │   │   ├── handover-form.tsx
@@ -673,17 +675,10 @@ smart-lost-and-found/
 │   │   ├── er_diagram.png
 │   │   └── relational_schema.png
 │   ├── screenshots/
-│   │   ├── app/
-│   │   │   └── (29 application screenshots, PNG)
-│   │   ├── campus-summary.png
-│   │   ├── home.png
-│   │   ├── my-claims.png
-│   │   ├── my-reports.png
-│   │   ├── potential-matches.png
-│   │   ├── report-lost-item.png
-│   │   ├── search.png
-│   │   └── sign-in.png
+│   │   └── app/
+│   │       └── (15 application screenshots, PNG)
 │   ├── architecture.drawio
+│   ├── contribution_matrix.md
 │   ├── DBMS Level 3 Project Requirements.pdf
 │   ├── demo_checklist.md
 │   ├── lost_found_ER_diagram.drawio

@@ -72,7 +72,7 @@ lib/                   # db (pools + roles), admin-db, auth, session, password, 
 db/                    # Setup, migrations, RBAC, security functions, procedures, analytics, verification, seeds
 scripts/               # provision-account.mjs (ADMIN provisioning), backfill-embeddings.mjs
 tests/                 # support (isolated test DB), handover, rbac, features, vector-index, polish-browser
-docs/                  # Report, diagrams (.drawio + PNG), screenshots, evidence logs, submission PDF/DOCX
+docs/                  # Report, diagrams (.drawio + PNG), application screenshots (evidence logs and submission PDF/DOCX stay local, git-ignored)
 ```
 
 ## Prerequisites
