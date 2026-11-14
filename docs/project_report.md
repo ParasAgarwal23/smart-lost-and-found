@@ -86,13 +86,37 @@ The project uses **Option 2: SQL + vector database**, implemented as **PostgreSQ
 
 ![Figure 1. ER diagram (Chen notation)](diagrams/er_diagram.png)
 
-Editable source: `docs/lost_found_ER_diagram.drawio`. Eight entities (seven strong, one weak) and eleven relationships. `CLAIM_EVIDENCE` is a weak entity identified through `HAS_EVIDENCE` (total participation); `Photos` is a multivalued attribute; `MATCHES` is the M:N relationship between lost and found reports. The ER diagram did not change in this revision: no entity, attribute or relationship was added or removed. Referential actions, defaults, CHECK constraints and security policies are relational/physical design decisions shown in the relational schema below.
+Editable source: `docs/lost_found_ER_diagram.drawio`. Eight entities (seven strong, one weak) and eleven relationships. `CLAIM_EVIDENCE` is a weak entity identified through `HAS_EVIDENCE` (total participation); `Photos` is a multivalued attribute; `MATCHES` is the M:N relationship between lost and found reports. The ER diagram did not change in this revision: no entity, attribute or relationship was added or removed. Referential actions, defaults, CHECK constraints and security policies are relational/physical design decisions, recorded in the data dictionary and DDL below.
 
 ## 9. Relational schema
 
-![Figure 2. Relational schema with keys, NOT NULL foreign keys, constraints, defaults and ON DELETE actions](diagrams/relational_schema.png)
+![Figure 2. Relational schema](diagrams/relational_schema.png)
 
-Editable source: `docs/lost_found_relational_schema.drawio`. Arrows run from each foreign key to the primary key it references. **NN** marks NOT NULL foreign keys, **CASCADE** marks the three `ON DELETE CASCADE` keys (MATCHES ×2, FOUND_PHOTOS), and **DEFAULT CURRENT_DATE** marks the two database-supplied dates.
+Editable source: `docs/lost_found_relational_schema.drawio`. Each relation is shown as its name above a row of its attributes. Primary-key attributes are underlined, and each arrow runs from a foreign-key attribute to the primary key it references.
+
+In relational notation (primary-key attributes underlined, foreign-key attributes in italics):
+
+- USER(<ins>User_ID</ins>, Name, Email, Phone, Role, Password_Hash)
+- CATEGORY(<ins>Category_ID</ins>, Category_Name)
+- LOCATION(<ins>Location_ID</ins>, Location_Name, Building)
+- LOST_REPORT(<ins>Lost_ID</ins>, *User_ID*, *Category_ID*, *Location_ID*, Item_Name, Description, Date_Lost, Status, Embedding)
+- FOUND_REPORT(<ins>Found_ID</ins>, *User_ID*, *Category_ID*, *Location_ID*, Item_Name, Description, Date_Found, Status, Embedding)
+- FOUND_PHOTOS(<ins>*Found_ID*</ins>, <ins>Photo_URL</ins>)
+- MATCHES(<ins>*Lost_ID*</ins>, <ins>*Found_ID*</ins>, Match_Score, Match_Status, Match_Date)
+- CLAIM(<ins>Claim_ID</ins>, *User_ID*, *Found_ID*, Claim_Date, Status)
+- HANDOVER(<ins>Handover_ID</ins>, *Claim_ID*, Handover_Date, Signature)
+- CLAIM_EVIDENCE(<ins>*Claim_ID*</ins>, <ins>Evidence_No</ins>, Evidence_Description, File_Path)
+
+| Foreign key | References |
+| --- | --- |
+| LOST_REPORT.User_ID, FOUND_REPORT.User_ID, CLAIM.User_ID | USER.User_ID |
+| LOST_REPORT.Category_ID, FOUND_REPORT.Category_ID | CATEGORY.Category_ID |
+| LOST_REPORT.Location_ID, FOUND_REPORT.Location_ID | LOCATION.Location_ID |
+| MATCHES.Lost_ID | LOST_REPORT.Lost_ID |
+| FOUND_PHOTOS.Found_ID, MATCHES.Found_ID, CLAIM.Found_ID | FOUND_REPORT.Found_ID |
+| HANDOVER.Claim_ID, CLAIM_EVIDENCE.Claim_ID | CLAIM.Claim_ID |
+
+Data types, NOT NULL, UNIQUE and CHECK constraints, defaults and ON DELETE actions are listed in the data dictionary (section 10).
 
 ## 10. Data dictionary
 
@@ -469,7 +493,7 @@ Both branches use their HNSW index, and Merge Append reads only as many candidat
 
 **Application layer.** Passwords are hashed with Argon2id (`lib/password.ts`). A successful sign-in stores only `User_ID` in an encrypted, HTTP-only, SameSite=Lax `iron-session` cookie (8 hours; Secure in production). On every request the user's name and role are re-read from PostgreSQL; `requireRole("ADMIN")` protects the admin page, and `lib/admin-db.ts` repeats that check before it touches the admin connection.
 
-**Database layer** (`db/roles.sql`, Figures 19–20). The application never connects as a superuser.
+**Database layer** (`db/roles.sql`). The application never connects as a superuser.
 
 | Role | Kind | Can do |
 | --- | --- | --- |
@@ -651,8 +675,6 @@ smart-lost-and-found/
 │   ├── screenshots/
 │   │   ├── app/
 │   │   │   └── (29 application screenshots, PNG)
-│   │   ├── code/
-│   │   │   └── (21 VS Code screenshots, PNG)
 │   │   ├── campus-summary.png
 │   │   ├── home.png
 │   │   ├── my-claims.png
@@ -739,31 +761,7 @@ All screenshots below are native Windows captures of the real Chrome window runn
 
 ![Figure 18. A USER is denied the admin page](screenshots/app/29-user-denied-admin.png)
 
-## 33. Application code screenshots
-
-Native captures of the actual source files opened in Visual Studio Code on the development machine. A representative selection is shown; the remaining captures are kept locally.
-
-![Figure 19. Role memberships and database/schema privileges (db/roles.sql)](screenshots/code/01-roles-memberships-grants.png)
-
-![Figure 20. Row-Level Security policies (db/roles.sql)](screenshots/code/03-roles-rls-policies.png)
-
-![Figure 21. register_user: USER-only registration (db/security_functions.sql)](screenshots/code/05-security-functions-register-user.png)
-
-![Figure 22. Registration Server Action (app/actions/register.ts)](screenshots/code/06-register-server-action.png)
-
-![Figure 23. Argon2id password hashing (lib/password.ts)](screenshots/code/08-password-argon2id.png)
-
-![Figure 24. withdraw_claim procedure (db/procedures.sql)](screenshots/code/09-procedure-withdraw-claim.png)
-
-![Figure 25. Recursive CTE timeline (db/admin_reports.sql)](screenshots/code/12-admin-recursive-cte.png)
-
-![Figure 26. Embedding-invalidation trigger (db/triggers.sql)](screenshots/code/13-trigger-invalidate-embedding.png)
-
-![Figure 27. Semantic search SQL for HNSW (lib/semantic-search.ts)](screenshots/code/16-semantic-search-hnsw-query.png)
-
-![Figure 28. Transaction-local role and identity (lib/db.ts)](screenshots/code/17-db-transaction-local-role.png)
-
-## 34. Testing strategy and verified results
+## 33. Testing strategy and verified results
 
 **Isolation.** Tests never touch the real database. `tests/support.mjs` rewrites all three connections (web, admin, owner) to the clone `smart_lost_found_test` and refuses to start unless every connection reaches it and the two application logins are not superusers. Fixtures are inserted and removed through the owner connection, and each suite compares all ten tables with their pre-test contents. Setup scripts accept only the three named databases; `demo_seed.sql` accepts only the demo database. The live database was backed up (`pg_dump -Fc`, `pg_dumpall --globals-only`, outside the repository) and the backup was restored into a scratch database with identical row fingerprints before any change.
 
@@ -782,7 +780,7 @@ Native captures of the actual source files opened in Visual Studio Code on the d
 
 Verification logs, the backup/restore check and the test output are kept locally with the project owner; the table above reports their final results.
 
-## 35. Rubric completion mapping
+## 34. Rubric completion mapping
 
 | # | Criterion (marks) | Evidence in this project |
 | --- | --- | --- |
@@ -799,9 +797,9 @@ Verification logs, the backup/restore check and the test output are kept locally
 | 11 | Backend/API and database integration (2) | Server Actions, `lib/db.ts`, `lib/admin-db.ts`, environment-based credentials; section 30 |
 | 12 | Authentication, two roles, database RBAC (4) | Registration, Argon2id, USER/ADMIN, PostgreSQL roles, GRANT/REVOKE, RLS; sections 27–29 |
 | 13 | Documentation and Git/GitHub (2) | This report, README, `db/README.md`, demo checklist, Git history |
-| 14 | Originality, individual contribution, modification/viva (4) | Original design; contribution allocation (section 36, `docs/contribution_matrix.md`); demo checklist for the viva |
+| 14 | Originality, individual contribution, modification/viva (4) | Original design; contribution allocation (section 35, `docs/contribution_matrix.md`); demo checklist for the viva |
 
-## 36. Individual contributions
+## 35. Individual contributions
 
 The team agreed the following division of responsibilities. It is recorded in detail, with files, verification duties and a review/acceptance column for each member, in `docs/contribution_matrix.md`.
 
@@ -813,7 +811,7 @@ The team agreed the following division of responsibilities. It is recorded in de
 
 This allocation describes responsibility and review. It is independent of Git commit authorship (one member commits the reviewed changes). Parts of the implementation and documentation were prepared with an AI coding assistant under the team's direction; neither member claims to have typed that code by hand. Each member's acceptance is recorded in the contribution matrix after their own review.
 
-## 37. Conclusion and future enhancements
+## 36. Conclusion and future enhancements
 
 The Smart Lost and Found Management System combines a normalised relational design with semantic vector search in a single PostgreSQL server, and enforces security in the database as well as the application. Reports and their embeddings stay consistent through transactions, a trigger and deliberate referential actions; claims, evidence and handovers are protected as history; anonymous visitors, users and administrators each reach exactly the data their role allows, enforced by PostgreSQL roles, column grants and Row-Level Security. Administrators get analytics built on recursive and grouped SQL. All of this was verified on isolated databases with automated, database-level and browser tests.
 

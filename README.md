@@ -20,7 +20,7 @@ Home (`/`), Search (`/search`), Sign In (`/login`) and Create Account (`/registe
 
 ## Screenshots
 
-Genuine captures from this project's production build with fictional demo data: application screenshots of the real Chrome window and source-code screenshots from VS Code (selected examples are in `docs/screenshots/`).
+Genuine captures of the real Chrome window running this project's production build with fictional demo data (selected examples are in `docs/screenshots/app/`).
 
 | | |
 | --- | --- |
